@@ -1156,4 +1156,31 @@ Returns a new rope value.
 
         module
     }
+
+    // steel diffing
+
+    #[derive(Clone, PartialEq, Eq)]
+    pub struct SteelRope(crate::Rope);
+
+    impl steel::rvals::Custom for SteelRope {}
+
+    #[derive(Clone, PartialEq, Eq)]
+    pub struct SteelTransaction(crate::Transaction);
+
+    impl steel::rvals::Custom for SteelTransaction {}
+
+    pub fn diff_module() -> BuiltInModule {
+        let mut module = BuiltInModule::new("helix/core/diff");
+
+        module.register_fn(
+            "diff->compare-ropes",
+            |mut before: SteelRope, after: SteelRope| -> SteelTransaction {
+                let transaction = crate::diff::compare_ropes(&(before.0), &(after.0));
+                transaction.apply(&mut before.0);
+                SteelTransaction(transaction)
+            },
+        );
+
+        module
+    }
 }

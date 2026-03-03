@@ -12,6 +12,8 @@ repository.workspace = true
 homepage.workspace = true
 
 [features]
+# FIXME: remove this
+default = ["steel"] # Add steel here for development
 unicode-lines = ["ropey/unicode_lines"]
 integration = []
 steel = ["dep:steel-core"]

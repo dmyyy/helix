@@ -5,8 +5,8 @@ use helix_core::{
     command_line::Args,
     diagnostic::Severity,
     extensions::steel_implementations::{
-        rope_module, treesitter_module, SteelRopeSlice, TreeSitterMatch, TreeSitterQuery,
-        TreeSitterQueryLoader, TreeSitterSyntax, TreeSitterTree,
+        diff_module, rope_module, treesitter_module, SteelRopeSlice, TreeSitterMatch,
+        TreeSitterQuery, TreeSitterQueryLoader, TreeSitterSyntax, TreeSitterTree,
     },
     find_workspace, graphemes,
     syntax::{
@@ -3610,6 +3610,16 @@ fn load_rope_api(engine: &mut Engine, generate_sources: bool) {
     engine.register_module(rope_slice_module);
 }
 
+fn load_diff_api(engine: &mut Engine, generate_sources: bool) {
+    let diff_module = diff_module();
+
+    if generate_sources {
+        configure_lsp_builtins("diff", &diff_module);
+    }
+
+    engine.register_module(diff_module);
+}
+
 fn load_treesitter_api(engine: &mut Engine, generate_sources: bool) {
     let mut module = treesitter_module();
     let builtin_treesitter_module = include_str!("treesitter.scm");
@@ -3942,6 +3952,7 @@ pub fn configure_builtin_sources(engine: &mut Engine, generate_sources: bool) {
     load_static_commands(engine, generate_sources);
     load_keymap_api(engine, generate_sources);
     load_rope_api(engine, generate_sources);
+    load_diff_api(engine, generate_sources);
     load_treesitter_api(engine, generate_sources);
     load_misc_api(engine, generate_sources);
     load_component_api(engine, generate_sources);

@@ -1,0 +1,6 @@
+"/Users/dmy/rust/helix/helix-core/src/lib.rs"
+"/Users/dmy/rust/helix/helix-event/src/lib.rs"
+"/Users/dmy/rust/helix/helix-core/src/diff.rs"
+"/Users/dmy/.cache/helix/helix.log"
+"/Users/dmy/rust/helix/steel-docs.md"
+"/Users/dmy/rust/helix/STEEL.md"
