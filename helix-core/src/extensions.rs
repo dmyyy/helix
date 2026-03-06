@@ -7,7 +7,7 @@ pub mod steel_implementations {
 
     use ropey::RopeSlice;
     use steel::{
-        gc::ShareableMut,
+        gc::{unsafe_erased_pointers::CustomReference, ShareableMut},
         rvals::{as_underlying_type, AsRefSteelVal, Custom, SteelString},
         steel_vm::{
             builtin::{BuiltInModule, MarkdownDoc},
@@ -1154,21 +1154,33 @@ Returns a new rope value.
     #[derive(Clone, PartialEq, Eq)]
     pub struct SteelRope(crate::Rope);
 
-    impl steel::rvals::Custom for SteelRope {}
+    impl Custom for SteelRope {}
+    impl CustomReference for SteelRope {}
 
     #[derive(Clone, PartialEq, Eq)]
     pub struct SteelTransaction(crate::Transaction);
 
-    impl steel::rvals::Custom for SteelTransaction {}
+    impl Custom for SteelTransaction {}
 
     pub fn diff_module() -> BuiltInModule {
         let mut module = BuiltInModule::new("helix/core/diff");
 
         module.register_fn(
-            "diff->compare-ropes",
-            |mut before: SteelRope, after: SteelRope| -> SteelTransaction {
+            "compare-ropes",
+            // |mut before: SteelRope, after: SteelRope| -> SteelTransaction {
+            |before: SteelRope, after: SteelRope| -> SteelTransaction {
                 let transaction = crate::diff::compare_ropes(&(before.0), &(after.0));
-                transaction.apply(&mut before.0);
+                // transaction.apply(&mut before.0);
+                SteelTransaction(transaction)
+            },
+        );
+
+        module.register_fn(
+            "apply-transaction",
+            // |mut before: SteelRope, after: SteelRope| -> SteelTransaction {
+            |before: SteelRope, after: SteelRope| -> SteelTransaction {
+                let transaction = crate::diff::compare_ropes(&(before.0), &(after.0));
+                // transaction.apply(&mut before.0);
                 SteelTransaction(transaction)
             },
         );

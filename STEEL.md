@@ -2,7 +2,7 @@
 
 You will need:
 
-* A clone of this fork, on the branch `steel-event-system`
+- A clone of this fork, on the branch `steel-event-system`
 
 ## Installing helix
 
@@ -27,8 +27,8 @@ features = ["git", "steel"]
 
 There are 2 important files you'll want, which should be auto generated during the installation process if they don't already exist:
 
-* `~/.config/helix/helix.scm`
-* `~/.config/helix/init.scm`
+- `~/.config/helix/helix.scm`
+- `~/.config/helix/init.scm`
 
 Note - these both live inside the same directory that helix sets up for runtime configurations.
 
@@ -36,7 +36,6 @@ Note - these both live inside the same directory that helix sets up for runtime 
 
 The `helix.scm` module will be loaded first before anything else, the runtime will `require` this module, and any functions exported will now be available
 to be used as typed commands. For example:
-
 
 ```scheme
 # helix.scm
@@ -79,15 +78,12 @@ to be used as typed commands. For example:
 ;; Opens the init.scm file
 (define (open-init-scm)
   (helix.open (helix.static.get-init-scm-path)))
-  
-	
 ```
 
 Now, if you'd like to add the current file you're editing to git, simply type `:git-add` - you'll see the doc pop up with it since we've annotated the function
 with the `@doc` symbol. Hitting enter will execute the command.
 
 You can also conveniently open the `helix.scm` file by using the typed command `:open-helix-scm`.
-
 
 ### `init.scm`
 
@@ -115,7 +111,6 @@ For example, if we wanted to select a random theme at startup:
   (helix.theme (select-random options)))
 
 (randomly-pick-theme possible-themes)
-
 ```
 
 ### Libraries for helix
@@ -128,7 +123,6 @@ If you'd like to use them, create a directory called `cogs` in your `.config/hel
 
 If you'd like to override configurations from your toml config:
 
-
 ```scheme
 # init.scm
 
@@ -137,9 +131,7 @@ If you'd like to override configurations from your toml config:
 (file-picker (fp-hidden #f))
 (cursorline #t)
 (soft-wrap (sw-enable #t))
-
 ```
-
 
 ### keymaps.scm
 
@@ -166,12 +158,10 @@ Applying custom keybindings for certain file extensions:
 (merge-keybindings file-tree-base FILE-TREE-KEYBINDINGS)
 
 (set-global-buffer-or-extension-keymap (hash "scm" standard-keybindings FILE-TREE file-tree-base))
-	
 ```
 
 In insert mode, this overrides the `ret` keybinding to instead use a custom scheme indent function. Functions _must_ be available as typed commands, and are referred to
 as symbols. So in this case, the `scheme-indent` function was exported by my `helix.scm` module.
-
 
 ## Writing a plugin
 
@@ -200,7 +190,6 @@ may need to add:
 This brings those functions to the top level scope so that you can interact with them. You may also be keen to peruse all of the steel
 functions and modules available. Those can be found in `steel-docs.md`.
 
-
 ### Command API
 
 There are two levels of the functionality exposed to plugins. The first is simply based around
@@ -211,8 +200,8 @@ popups, like the file picker or buffer selection.
 To understand the first level, which is accessing typed commands and static commands, i.e. commands that you
 typically type via `:`, or static commands, commands which are bound to keybindings, you can look at the modules:
 
-* helix/commands.scm
-* helix/static.scm
+- helix/commands.scm
+- helix/static.scm
 
 Every function here implicitly has access to a context, the helix context. This assumes that you're focused onto
 some buffer, and any actions are assumed to be done within that context. For example, calling `vsplit` will
@@ -230,8 +219,8 @@ up having an infinite loop of some kind, `ctrl-c` should break you out).
 
 Luckily, there are a handful of ways we can accomplish more sophisticated plugins:
 
-* Futures
-* Threads
+- Futures
+- Threads
 
 There are a handful of primitives that accept a future + a callback, where the callback will get executed once the future
 is complete. The future will get scheduled on to the helix event loop, so the UI won't be blocked. (TODO: Document this more!)
@@ -239,14 +228,12 @@ is complete. The future will get scheduled on to the helix event loop, so the UI
 Another way we can accomplish this is with native threads. Steel supports native threads, which means we can spawn a function
 off on to another thread to run some code. Consider the following example which won't work:
 
-
 ```scheme
 (spawn-native-thread (lambda () (time/sleep-ms 1000) (theme "focus_nova"))) ;; Note, this won't work!
 ```
 
 This appears to spawn a thread, sleep for 1 second, and then change the theme. The issue here is that this thread does not
 have control over the helix context. So what we'll have to do instead, is schedule a function to be run on the main thread:
-
 
 ```scheme
 (require "helix/ext.scm")
@@ -263,7 +250,6 @@ have control over the helix context. So what we'll have to do instead, is schedu
 `hx.block-on-task` will check if we're running on the main thread. If we are already, it doesn't do anything - but otherwise,
 it enqueues a callback that schedules itself onto the main thread, and waits till it can acquire the helix context. The function
 is then run, and the value returned back to this thread of control.
-
 
 There is also `hx.with-context` which does a similar thing, except it does _not_ block the current thread.
 

@@ -1,536 +1,55 @@
-# /home/matt/.steel/cogs/helix/keymaps.scm
-### ***reverse-buffer-map-insert***
-Insert a value into the reverse buffer map
-### **set-global-buffer-or-extension-keymap**
-Check that the types on this map check out, otherwise we don't need to consistently do these checks
-### **query-global-keymap**
-Query the global keybindings.
+# /Users/dmy/.steel/cogs/helix/ext.scm
+### **eval-buffer**
+Eval the current buffer, morally equivalent to load-buffer!
+### **evalp**
+Eval prompt
+### **running-on-main-thread?**
+Check what the main thread id is, compare to the main thread
+### **hx.with-context**
+If running on the main thread already, just do nothing.
+Check the ID of the engine, and if we're already on the
+main thread, just continue as is - i.e. just block. This does
+not block on the function if this is running on another thread.
 
 ```scheme
-(query-global-keymap "normal" '("space" "f")) ;; => "file_picker"
+(hx.with-context thunk)
 ```
-### **add-global-keybinding**
-Add keybinding to the global default
-### **deep-copy-global-keybindings**
-Deep copy the global keymap
-### **keymap**
-# /home/matt/.steel/cogs/helix/configuration.scm
-### **statusline**
-Configuration of the statusline elements.
-The following status line elements can be configured:
-
-Key	                        Description
--------------------------------------------------------------------------------------------
-mode	                        The current editor mode (mode.normal/mode.insert/mode.select)
-spinner	                    A progress spinner indicating LSP activity
-file-name	                The path/name of the opened file
-file-absolute-path	        The absolute path/name of the opened file
-file-base-name	            The basename of the opened file
-file-modification-indicator	The indicator to show whether the file is modified (a [+] appears when there are unsaved changes)
-file-encoding	            The encoding of the opened file if it differs from UTF-8
-file-line-ending	            The file line endings (CRLF or LF)
-file-indent-style	        The file indentation style
-read-only-indicator	        An indicator that shows [readonly] when a file cannot be written
-total-line-numbers	        The total line numbers of the opened file
-file-type	                The type of the opened file
-diagnostics	                The number of warnings and/or errors
-workspace-diagnostics	    The number of warnings and/or errors on workspace
-selections	                The primary selection index out of the number of active selections
-primary-selection-length	    The number of characters currently in primary selection
-position	                    The cursor position
-position-percentage	        The cursor position as a percentage of the total number of lines
-separator	                The string defined in editor.statusline.separator (defaults to "│")
-spacer	                    Inserts a space between elements (multiple/contiguous spacers may be specified)
-version-control	            The current branch name or detached commit hash of the opened workspace
-register	                    The current selected register
-### **indent-heuristic**
-Which indent heuristic to use when a new line is inserted
-Defaults to `"hybrid"`
-Valid options are:
-* "simple"
-* "tree-sitter"
-* "hybrid"
-### **atomic-save**
-Whether to use atomic operations to write documents to disk.
-This prevents data loss if the editor is interrupted while writing the file, but may
-confuse some file watching/hot reloading programs. Defaults to `#true`.
-### **lsp**
-Blanket LSP configuration
-The options are provided in a hashmap, and provided options will be merged
-with the defaults. The options are as follows:
-
-Enables LSP
-* enable: bool
-
-Display LSP messagess from $/progress below statusline
-* display-progress-messages: bool
-
-Display LSP messages from window/showMessage below statusline
-* display-messages: bool
-
-Enable automatic pop up of signature help (parameter hints)
-* auto-signature-help: bool
-
-Display docs under signature help popup
-* display-signature-help-docs: bool
-
-Display inlay hints
-* display-inlay-hints: bool
-
-Maximum displayed length of inlay hints (excluding the added trailing `…`).
-If it's `None`, there's no limit
-* inlay-hints-length-limit: Option<NonZeroU8>
-
-Display document color swatches
-* display-color-swatches: bool
-
-Whether to enable snippet support
-* snippets: bool
-
-Whether to include declaration in the goto reference query
-* goto_reference_include_declaration: bool
-
-```scheme
-(lsp (hash 'display-inlay-hints #t))
-```
-
-The defaults shown from the rust side are as follows:
-```rust
-        LspConfig {
-           enable: true,
-           display_progress_messages: false,
-           display_messages: true,
-           auto_signature_help: true,
-           display_signature_help_docs: true,
-           display_inlay_hints: false,
-           inlay_hints_length_limit: None,
-           snippets: true,
-           goto_reference_include_declaration: true,
-           display_color_swatches: true,
-       }
-
-```
-### **search**
-Search configuration
-Accepts two keywords, #:smart-case and #:wrap-around, both default to true.
-
-```scheme
-(search #:smart-case #t #:wrap-around #t)
-(search #:smart-case #f #:wrap-around #f)
-```
-### **auto-pairs**
-Automatic insertion of pairs to parentheses, brackets,
-etc. Optionally, this can be a list of pairs to specify a
-global list of characters to pair, or a hashmap of character to character.
-Defaults to true.
-
-```scheme
-(auto-pairs #f)
-(auto-pairs #t)
-(auto-pairs (list '(#\{ . #\})))
-(auto-pairs (list '(#\{ #\})))
-(auto-pairs (list (cons #\{ #\})))
-(auto-pairs (hash #\{ #\}))
-```
-### **continue-comments**
-Whether comments should be continued.
-### **popup-border**
-Set the popup border.
-Valid options are:
-* "none"
-* "all"
-* "popup"
-* "menu"
-### **register-lsp-notification-handler**
-Register a callback to be called on LSP notifications sent from the server -> client
-that aren't currently handled by Helix as a built in.
-
-```scheme
-(register-lsp-notification-handler lsp-name event-name handler)
-```
-
-* lsp-name : string?
-* event-name : string?
-* function : (-> hash? any?) ;; Function where the first argument is the parameters
-
-# Examples
-```
-(register-lsp-notification-handler "dart"
-                                   "dart/textDocument/publishClosingLabels"
-                                   (lambda (args) (displayln args)))
-```
-### **register-lsp-call-handler**
-Register a callback to be called on LSP calls sent from the server -> client
-that aren't currently handled by Helix as a built in.
-
-```scheme
-(register-lsp-call-handler lsp-name event-name handler)
-```
-
-* lsp-name : string?
-* event-name : string?
-* function : (-> hash? any?) ;; Function where the first argument is the parameters
-
-# Examples
-```
-(register-lsp-call-handler "dart"
-                                   "dart/textDocument/publishClosingLabels"
-                                   (lambda (call-id args) (displayln args)))
-```
-### **define-lsp**
-Syntax:
-
-Registers an lsp configuration. This is a thin wrapper around passing
-a hashmap manually to `set-lsp-config!`, and has a slightly more elegant
-API.
-
-Examples:
-```scheme
-(define-lsp "steel-language-server" (command steel-language-server) (args '()))
-(define-lsp "rust-analyzer" (config (experimental (hash 'testExplorer #t 'runnables '("cargo")))))
-(define-lsp "tinymist" (config (exportPdf "onType") (outputPath "$root/$dir/$name")))
-```
-### **cursor-shape**
-Shape for cursor in each mode
-
-(cursor-shape #:normal (normal 'block)
-              #:select (select 'block)
-              #:insert (insert 'block))
-
-# Examples
-
-```scheme
-(cursor-shape #:normal 'block #:select 'underline #:insert 'bar)
-```
-### **get-lsp-config**
-Get the lsp configuration for a language server.
-
-Returns a hashmap which can be passed to `set-lsp-config!`
-### **set-lsp-config!**
-Sets the language server config for a specific language server.
-
-```scheme
-(set-lsp-config! lsp config)
-```
-* lsp : string?
-* config: hash?
-
-This will overlay the existing configuration, much like the existing
-toml definition does.
-
-Available options for the config hash are:
-```scheme
-(hash "command" "<command>"
-      "args" (list "args" ...)
-      "environment" (hash "ENV" "VAR" ...)
-      "config" (hash ...)
-      "timeout" 100 ;; number
-      "required-root-patterns" (listof "pattern" ...))
-
-```
-
-# Examples
-```
-(set-lsp-config! "jdtls"
-   (hash "args" (list "-data" "/home/matt/code/java-scratch/workspace")))
-```
-### **file-picker-kw**
-Sets the configuration for the file picker using keywords.
-
-```scheme
-(file-picker-kw #:hidden #t
-                #:follow-symlinks #t
-                #:deduplicate-links #t
-                #:parents #t
-                #:ignore #t
-                #:git-ignore #t
-                #:git-exclude #t
-                #:git-global #t
-                #:max-depth #f) ;; Expects either #f or an int?
-```
-By default, max depth is `#f` while everything else is an int?
-
-To use this, call this in your `init.scm` or `helix.scm`:
+thunk : (-> any?) ;; Function that has no arguments
 
 # Examples
 ```scheme
-(file-picker-kw #:hidden #f)
+(spawn-native-thread
+  (lambda ()
+    (hx.with-context (lambda () (theme "nord")))))
 ```
-### **file-picker**
-Sets the configuration for the file picker using var args.
-
+### **hx.block-on-task**
+Block on the given function.
 ```scheme
-(file-picker . args)
+(hx.block-on-task thunk)
 ```
-
-The args are expected to be something of the value:
-```scheme
-(-> FilePickerConfiguration? bool?)    
-```
-
-These other functions in this module which follow this behavior are all
-prefixed `fp-`, and include:
-
-* fp-hidden
-* fp-follow-symlinks
-* fp-deduplicate-links
-* fp-parents
-* fp-ignore
-* fp-git-ignore
-* fp-git-global
-* fp-git-exclude
-* fp-max-depth
-
-By default, max depth is `#f` while everything else is an int?
-
-To use this, call this in your `init.scm` or `helix.scm`:
+thunk : (-> any?) ;; Function that has no arguments
 
 # Examples
 ```scheme
-(file-picker (fp-hidden #f) (fp-parents #f))
+(define thread
+  (spawn-native-thread
+    (lambda ()
+      (hx.block-on-task (lambda () (theme "nord") 10)))))
+
+;; Some time later, in a different context - if done at the same time,
+;; this will deadline, since the join depends on the callback previously
+;; executing.
+(equal? (thread-join! thread) 10) ;; => #true
 ```
-### **soft-wrap-kw**
-Sets the configuration for soft wrap using keyword args.
-
-```scheme
-(soft-wrap-kw #:enable #f
-              #:max-wrap 20
-              #:max-indent-retain 40
-              #:wrap-indicator "↪"
-              #:wrap-at-text-width #f)
-```
-
-The options are as follows:
-
-* #:enable:
-  Soft wrap lines that exceed viewport width. Default to off
-* #:max-wrap:
-  Maximum space left free at the end of the line.
-  This space is used to wrap text at word boundaries. If that is not possible within this limit
-  the word is simply split at the end of the line.
-
-  This is automatically hard-limited to a quarter of the viewport to ensure correct display on small views.
-
-  Default to 20
-* #:max-indent-retain
-  Maximum number of indentation that can be carried over from the previous line when softwrapping.
-  If a line is indented further then this limit it is rendered at the start of the viewport instead.
-
-  This is automatically hard-limited to a quarter of the viewport to ensure correct display on small views.
-
-  Default to 40
-* #:wrap-indicator
-  Indicator placed at the beginning of softwrapped lines
-
-  Defaults to ↪
-* #:wrap-at-text-width
-  Softwrap at `text_width` instead of viewport width if it is shorter
-
-# Examples
-```scheme
-(soft-wrap-kw #:sw-enable #t)
-```
-### **soft-wrap**
-Sets the configuration for soft wrap using var args.
-
-```scheme
-(soft-wrap . args)
-```
-
-The args are expected to be something of the value:
-```scheme
-(-> SoftWrapConfiguration? bool?)    
-```
-The options are as follows:
-
-* sw-enable:
-  Soft wrap lines that exceed viewport width. Default to off
-* sw-max-wrap:
-  Maximum space left free at the end of the line.
-  This space is used to wrap text at word boundaries. If that is not possible within this limit
-  the word is simply split at the end of the line.
-
-  This is automatically hard-limited to a quarter of the viewport to ensure correct display on small views.
-
-  Default to 20
-* sw-max-indent-retain
-  Maximum number of indentation that can be carried over from the previous line when softwrapping.
-  If a line is indented further then this limit it is rendered at the start of the viewport instead.
-
-  This is automatically hard-limited to a quarter of the viewport to ensure correct display on small views.
-
-  Default to 40
-* sw-wrap-indicator
-  Indicator placed at the beginning of softwrapped lines
-
-  Defaults to ↪
-* sw-wrap-at-text-width
-  Softwrap at `text_width` instead of viewport width if it is shorter
-
-# Examples
-```scheme
-(soft-wrap (sw-enable #t))
-```
-### **whitespace**
-Sets the configuration for whitespace using var args.
-
-```scheme
-(whitespace . args)
-```
-
-The args are expected to be something of the value:
-```scheme
-(-> WhitespaceConfiguration? bool?)    
-```
-The options are as follows:
-
-* ws-visible:
-  Show all visible whitespace, defaults to false
-* ws-render:
-  manually disable or enable characters
-  render options (specified in hashmap):
-```scheme
-  (hash
-    'space #f
-    'nbsp #f
-    'nnbsp #f
-    'tab #f
-    'newline #f)
-```
-* ws-chars:
-  manually set visible whitespace characters with a hashmap
-  character options (specified in hashmap):
-```scheme
-  (hash
-    'space #\·
-    'nbsp #\⍽
-    'nnbsp #\␣
-    'tab #\→
-    'newline #\⏎
-    ; Tabs will look like "→···" (depending on tab width)
-    'tabpad #\·)
-```
-# Examples
-```scheme
-(whitespace (ws-visible #t) (ws-chars (hash 'space #\·)) (ws-render (hash 'tab #f)))
-```
-### **indent-guides**
-Sets the configuration for indent-guides using args
-
-```scheme
-(indent-guides . args)
-```
-
-The args are expected to be something of the value:
-```scheme
-(-> IndentGuidesConfig? bool?)
-```
-The options are as follows:
-
-* ig-render:
-  Show indent guides, defaults to false
-* ig-character:
-  character used for indent guides, defaults to "╎"
-* ig-skip-levels:
-  amount of levels to skip, defaults to 1
-
-# Examples
-```scheme
-(indent-guides (ig-render #t) (ig-character #\|) (ig-skip-levels 1))
-```
-### **scrolloff**
-Padding to keep between the edge of the screen and the cursor when scrolling. Defaults to 5.
-### **scroll_lines**
-Number of lines to scroll at once. Defaults to 3
-### **mouse**
-Mouse support. Defaults to true.
-### **shell**
-Shell to use for shell commands. Defaults to ["cmd", "/C"] on Windows and ["sh", "-c"] otherwise.
-### **jump-label-alphabet**
-The characters that are used to generate two character jump labels. Characters at the start of the alphabet are used first. Defaults to "abcdefghijklmnopqrstuvwxyz"
-### **line-number**
-Line number mode. Defaults to 'absolute, set to 'relative for relative line numbers
-### **cursorline**
-Highlight the lines cursors are currently on. Defaults to false
-### **cursorcolumn**
-Highlight the columns cursors are currently on. Defaults to false
-### **middle-click-paste**
-Middle click paste support. Defaults to true
-### **auto-completion**
-Automatic auto-completion, automatically pop up without user trigger. Defaults to true.
-### **auto-format**
-Automatic formatting on save. Defaults to true.
-### **auto-save**
-Automatic save on focus lost and/or after delay.
-Time delay in milliseconds since last edit after which auto save timer triggers.
-Time delay defaults to false with 3000ms delay. Focus lost defaults to false.
-               
-### **text-width**
-Set a global text_width
-### **idle-timeout**
-Time in milliseconds since last keypress before idle timers trigger.
-Used for various UI timeouts. Defaults to 250ms.
-### **completion-timeout**
-
-Time in milliseconds after typing a word character before auto completions
-are shown, set to 5 for instant. Defaults to 250ms.
-               
-### **preview-completion-insert**
-Whether to insert the completion suggestion on hover. Defaults to true.
-### **completion-trigger-len**
-Length to trigger completions
-### **completion-replace**
-Whether to instruct the LSP to replace the entire word when applying a completion
-or to only insert new text
-### **auto-info**
-Whether to display infoboxes. Defaults to true.
-### **true-color**
-Set to `true` to override automatic detection of terminal truecolor support in the event of a false negative. Defaults to `false`.
-### **insert-final-newline**
-Whether to automatically insert a trailing line-ending on write if missing. Defaults to `true`
-### **color-modes**
-Whether to color modes with different colors. Defaults to `false`.
-### **gutters**
-Gutter configuration
-### **undercurl**
-Set to `true` to override automatic detection of terminal undercurl support in the event of a false negative. Defaults to `false`.
-### **terminal**
-Terminal config
-### **rulers**
-Column numbers at which to draw the rulers. Defaults to `[]`, meaning no rulers
-### **bufferline**
-Persistently display open buffers along the top
-### **workspace-lsp-roots**
-Workspace specific lsp ceiling dirs
-### **default-line-ending**
-Which line ending to choose for new documents. Defaults to `native`. i.e. `crlf` on Windows, otherwise `lf`.
-### **smart-tab**
-Enables smart tab
-### **rainbow-brackets**
-Enabled rainbow brackets
-### **keybindings**
-Keybindings config
-### **set-keybindings!**
-Override the global keybindings with the provided keymap
-### **inline-diagnostics-cursor-line-enable**
-Inline diagnostics cursor line
-### **inline-diagnostics-other-lines-enable**
-Inline diagnostics other lines
-### **inline-diagnostics-end-of-line-enable**
-Inline diagnostics end of line
-### **inline-diagnostics-min-diagnostics-width**
-Inline diagnostics min diagnostics width
-### **inline-diagnostics-prefix-len**
-Inline diagnostics prefix length
-### **inline-diagnostics-max-wrap**
-Inline diagnostics maximum wrap
-### **inline-diagnostics-max-diagnostics**
-Inline diagnostics max diagnostics
-### **get-language-config**
-Get the configuration for a specific language
-### **set-language-config!**
-Set the language configuration
-# /home/matt/.steel/cogs/helix/commands.scm
+# /Users/dmy/.steel/cogs/helix/commands.scm
+### **goto-column**
+Move the cursor to the given character index within the same line
+### **goto-line**
+Move the cursor to the given line
+### **exit**
+Write changes to disk if the buffer is modified and then quit. Accepts an optional path (:exit some/path.txt).
+### **exit!**
+Force write changes to disk, creating necessary subdirectories, if the buffer is modified and then quit. Accepts an optional path (:exit! some/path.txt).
 ### **quit**
 Close the current view.
 ### **quit!**
@@ -584,7 +103,7 @@ Forcefully write changes from all buffers to disk creating necessary subdirector
 ### **write-quit-all**
 Write changes from all buffers to disk and close all views.
 ### **write-quit-all!**
-Write changes from all buffers to disk and close all views forcefully (ignoring unsaved changes).
+Forcefully write changes from all buffers to disk, creating necessary subdirectories, and close all views (ignoring unsaved changes).
 ### **quit-all**
 Close all views.
 ### **quit-all!**
@@ -643,6 +162,8 @@ Stops the given language servers, or all language servers that are used by the c
 Display tree sitter scopes, primarily for theming and development.
 ### **tree-sitter-highlight-name**
 Display name of tree-sitter highlight scope under the cursor.
+### **tree-sitter-layers**
+Display language names of tree-sitter injection layers under the cursor.
 ### **debug-start**
 Start a debug session from a given template with given parameters.
 ### **debug-remote**
@@ -699,10 +220,14 @@ Run a shell command
 Reset the diff change at the cursor position.
 ### **clear-register**
 Clear given register. If no argument is provided, clear all registers.
+### **set-register**
+Set contents of the given register.
 ### **redraw**
 Clear and re-render the whole UI
 ### **move**
 Move the current buffer and its corresponding file to a different path
+### **move!**
+Move the current buffer and its corresponding file to a different path creating necessary subdirectories
 ### **yank-diagnostic**
 Yank diagnostic(s) under primary cursor to register, or clipboard by default
 ### **read**
@@ -711,11 +236,1110 @@ Load a file into buffer
 Prints the given arguments to the statusline.
 ### **noop**
 Does nothing.
-### **goto-column**
-Move the cursor to the given character index within the same line
-### **goto-line**
-Move the cursor to the given line
-# /home/matt/.steel/cogs/helix/misc.scm
+# /Users/dmy/.steel/cogs/helix/components.scm
+### **theme->bg**
+DEPRECATED: Please use `theme-scope`
+Gets the `Style` associated with the bg for the current theme
+### **theme->fg**
+DEPRECATED: Please use `theme-scope`
+Gets the `style` associated with the fg for the current theme
+### **theme-scope-ref**
+Get the `Style` associated with the given scope from the current theme
+```
+(theme-scope-ref scope)
+```
+scope : string?
+
+# Examples
+
+```scheme
+(theme-scope-ref "ui.text")
+```
+### **theme-scope**
+Note: Prefer using theme-scope-ref. This is left in for backwards compatibility.
+
+Get the `Style` associated with the given scope from the current theme
+```
+(theme-scope scope)
+```
+scope : string?
+
+# Examples
+
+```scheme
+(theme-scope "ui.text")
+```
+### **Position?**
+Check if the given value is a `Position`
+
+```scheme
+(Position? value) -> bool?
+```
+
+value : any?
+
+
+### **Style?**
+Check if the given valuie is `Style`
+
+```scheme
+(Style? value) -> bool?
+```
+
+value : any?
+### **Buffer?**
+
+Checks if the given value is a `Buffer`
+
+```scheme
+(Buffer? value) -> bool?
+```
+
+value : any?
+
+### **buffer-area**
+
+Get the `Rect` associated with the given `Buffer`
+
+```scheme
+(buffer-area buffer)
+```
+
+* buffer : Buffer?
+
+### **frame-set-string!**
+
+Set the string at the given `x` and `y` positions for the given `Buffer`, with a provided `Style`.
+
+```scheme
+(frame-set-string! buffer x y string style)
+```
+
+buffer : Buffer?,
+x : int?,
+y : int?,
+string: string?,
+style: Style?,
+
+### **SteelEventResult?**
+
+Check whether the given value is a `SteelEventResult`.
+
+```scheme
+(SteelEventResult? value) -> bool?
+```
+
+value : any?
+
+
+### **new-component!**
+
+Construct a new dynamic component. This is used for creating widgets or floating windows
+that exist outside of the buffer. This just constructs the component, it does not push the component
+on to the component stack. For that, you'll use `push-component!`.
+
+```scheme
+(new-component! name state render function-map)
+```
+
+name : string? - This is the name of the comoponent itself.
+state : any? - Typically this is a struct that holds the state of the component.
+render : (-> state? Rect? Buffer?)
+   This is a function that will get called with each frame. The first argument is the state object provided,
+   and the second is the `Rect?` to render against, ultimately against the `Buffer?`.
+
+function-map : (hashof string? function?)
+   This is a hashmap of strings -> function that contains a few important functions:
+
+   "handle_event" : (-> state? Event?) -> SteelEventResult?
+
+       This is called on every event with an event object. There are multiple options you can use
+       when returning from this function:
+
+       * event-result/consume
+       * event-result/consume-without-rerender
+       * event-result/ignore
+       * event-result/close
+
+       See the associated docs for those to understand the implications for each.
+
+   "cursor" : (-> state? Rect?) -> Position?
+
+       This tells helix where to put the cursor.
+
+   "required_size": (-> state? (pair? int?)) -> (pair? int?)
+
+       Seldom used: TODO
+
+### **position**
+
+Construct a new `Position`.
+
+```scheme
+(position row col) -> Position?
+```
+
+row : int?
+col : int?
+
+### **position-row**
+
+Get the row associated with the given `Position`.
+
+```scheme
+(position-row pos) -> int?
+```
+
+pos : `Position?`
+
+### **position-col**
+
+Get the col associated with the given `Position`.
+
+```scheme
+(position-col pos) -> int?
+```
+
+pos : `Position?`
+### **set-position-row!**
+Set the row for the given `Position`
+
+```scheme
+(set-position-row! pos row)
+```
+
+pos : Position?
+row : int?
+
+### **set-position-col!**
+Set the col for the given `Position`
+
+```scheme
+(set-position-col! pos col)
+```
+
+pos : Position?
+col : int?
+
+### **Rect?**
+Check if the given value is a `Rect`
+
+```scheme
+(Rect? value) -> bool?
+```
+
+value : any?
+
+
+### **area**
+
+Constructs a new `Rect`.
+
+(area x y width height)
+
+* x : int?
+* y : int?
+* width: int?
+* height: int?
+
+# Examples
+
+```scheme
+(area 0 0 100 200)
+```
+### **area-x**
+Get the `x` value of the given `Rect`
+
+```scheme
+(area-x area) -> int?
+```
+
+area : Rect?
+
+### **area-y**
+Get the `y` value of the given `Rect`
+
+```scheme
+(area-y area) -> int?
+```
+
+area : Rect?
+
+### **area-width**
+Get the `width` value of the given `Rect`
+
+```scheme
+(area-width area) -> int?
+```
+
+area : Rect?
+
+### **area-height**
+Get the `height` value of the given `Rect`
+
+```scheme
+(area-height area) -> int?
+```
+
+area : Rect?
+
+### **render-native-component**
+Render a native component
+### **markdown-component**
+Render a native component
+```
+(markdown-component text)
+```
+### **Widget/list?**
+Check whether the given value is a list widget.
+
+```scheme
+(Widget/list? value) -> bool?
+```
+
+value : any?
+
+### **widget/list**
+Creates a new `List` widget with the given items.
+
+```scheme
+(widget/list lst) -> Widget?
+```
+
+* lst : (listof string?)
+
+### **widget/list/render**
+
+
+Render the given `Widget/list` onto the provided `Rect` within the given `Buffer`.
+
+```scheme
+(widget/list/render buf area lst)
+```
+
+* buf : `Buffer?`
+* area : `Rect?`
+* lst : `Widget/list?`
+
+### **block**
+Creates a block with the following styling:
+
+```scheme
+(block)
+```
+
+* borders - all
+* border-style - default style + white fg
+* border-type - rounded
+* style - default + black bg
+
+### **make-block**
+
+Create a `Block` with the provided styling, borders, and border type.
+
+
+```scheme
+(make-block style border-style borders border_type)
+```
+
+* style : Style?
+* border-style : Style?
+* borders : string?
+* border-type: String?
+
+Valid border-types include:
+* "plain"
+* "rounded"
+* "double"
+* "thick"
+
+Valid borders include:
+* "top"
+* "left"
+* "right"
+* "bottom"
+* "all"
+
+### **block/render**
+
+Render the given `Block` over the given `Rect` onto the provided `Buffer`.
+
+```scheme
+(block/render buf area block)
+```
+
+buf : Buffer?
+area: Rect?
+block: Block?
+
+
+### **buffer/clear**
+Clear a `Rect` in the `Buffer`
+
+```scheme
+(buffer/clear frame area)
+```
+frame : Buffer?
+area : Rect?
+
+### **buffer/clear-with**
+Clear a `Rect` in the `Buffer` with a default `Style`
+
+```scheme
+(buffer/clear-with frame area style)
+```
+frame : Buffer?
+area : Rect?
+style : Style?
+
+### **set-color-rgb!**
+
+Mutate the r/g/b of a color in place, to avoid allocation.
+
+```scheme
+(set-color-rgb! color r g b)
+```
+
+color : Color?
+r : int?
+g : int?
+b : int?
+### **set-color-indexed!**
+
+Mutate this color to be an indexed color.
+
+```scheme
+(set-color-indexed! color index)
+```
+
+color : Color?
+index: int?
+
+### **Color?**
+Check if the given value is a `Color`.
+
+```scheme
+(Color? value) -> bool?
+```
+
+value : any?
+
+
+### **Color/Reset**
+
+Singleton for the reset color.
+
+### **Color/Black**
+
+Singleton for the color black.
+
+### **Color/Red**
+
+Singleton for the color red.
+
+### **Color/White**
+
+Singleton for the color white.
+
+### **Color/Green**
+
+Singleton for the color green.
+
+### **Color/Yellow**
+
+Singleton for the color yellow.
+
+### **Color/Blue**
+
+Singleton for the color blue.
+
+### **Color/Magenta**
+
+Singleton for the color magenta.
+
+### **Color/Cyan**
+
+Singleton for the color cyan.
+
+### **Color/Gray**
+
+Singleton for the color gray.
+
+### **Color/LightRed**
+
+Singleton for the color light read.
+
+### **Color/LightGreen**
+
+Singleton for the color light green.
+
+### **Color/LightYellow**
+
+Singleton for the color light yellow.
+
+### **Color/LightBlue**
+
+Singleton for the color light blue.
+
+### **Color/LightMagenta**
+
+Singleton for the color light magenta.
+
+### **Color/LightCyan**
+
+Singleton for the color light cyan.
+
+### **Color/LightGray**
+
+Singleton for the color light gray.
+
+### **Color/rgb**
+
+Construct a new color via rgb.
+
+```scheme
+(Color/rgb r g b) -> Color?
+```
+
+r : int?
+g : int?
+b : int?
+
+### **Color-red**
+
+Get the red component of the `Color?`.
+
+```scheme
+(Color-red color) -> int?
+```
+
+color * Color?
+
+### **Color-green**
+
+Get the green component of the `Color?`.
+
+```scheme
+(Color-green color) -> int?
+```
+
+color * Color?
+### **Color-blue**
+
+Get the blue component of the `Color?`.
+
+```scheme
+(Color-blue color) -> int?
+```
+
+color * Color?
+### **Color/Indexed**
+
+
+Construct a new indexed color.
+
+```scheme
+(Color/Indexed index) -> Color?
+```
+
+* index : int?
+
+### **set-style-fg!**
+
+
+Mutates the given `Style` to have the fg with the provided color.
+
+```scheme
+(set-style-fg! style color)
+```
+
+style : `Style?`
+color : `Color?`
+
+### **style-fg**
+
+
+Constructs a new `Style` with the provided `Color` for the fg.
+
+```scheme
+(style-fg style color) -> Style
+```
+
+style : Style?
+color: Color?
+
+### **style-bg**
+
+
+Constructs a new `Style` with the provided `Color` for the bg.
+
+```scheme
+(style-bg style color) -> Style
+```
+
+style : Style?
+color: Color?
+
+### **style-with-italics**
+
+
+Constructs a new `Style` with italcs.
+
+```scheme
+(style-with-italics style) -> Style
+```
+
+style : Style?
+
+### **style-with-bold**
+
+
+Constructs a new `Style` with bold styling.
+
+```scheme
+(style-with-bold style) -> Style
+```
+
+style : Style?
+
+### **style-with-dim**
+
+
+Constructs a new `Style` with dim styling.
+
+```scheme
+(style-with-dim style) -> Style
+```
+
+style : Style?
+
+### **style-with-slow-blink**
+
+
+Constructs a new `Style` with slow blink.
+
+```scheme
+(style-with-slow-blink style) -> Style
+```
+
+style : Style?
+
+### **style-with-rapid-blink**
+
+
+Constructs a new `Style` with rapid blink.
+
+```scheme
+(style-with-rapid-blink style) -> Style
+```
+
+style : Style?
+
+### **style-with-reversed**
+
+
+Constructs a new `Style` with revered styling.
+
+```scheme
+(style-with-reversed style) -> Style
+```
+
+style : Style?
+
+### **style-with-hidden**
+
+Constructs a new `Style` with hidden styling.
+
+```scheme
+(style-with-hidden style) -> Style
+```
+
+style : Style?
+
+### **style-with-crossed-out**
+
+
+Constructs a new `Style` with crossed out styling.
+
+```scheme
+(style-with-crossed-out style) -> Style
+```
+
+style : Style?
+
+### **style->fg**
+
+
+Return the color on the style, or #false if not present.
+
+```scheme
+(style->fg style) -> (or Color? #false)
+```
+
+style : Style?
+
+
+### **style->bg**
+
+
+Return the color on the style, or #false if not present.
+
+```scheme
+(style->bg style) -> (or Color? #false)
+```
+
+style : Style?
+
+
+### **set-style-bg!**
+
+
+Mutate the background style on the given style to a given color.
+
+```scheme
+(set-style-bg! style color)
+```
+
+style : Style?
+color : Color?
+
+
+### **style-underline-color**
+
+
+Return a new style with the provided underline color.
+
+```scheme
+(style-underline-color style color) -> Style?
+
+```
+style : Style?
+color : Color?
+
+
+### **style-underline-style**
+
+Return a new style with the provided underline style.
+
+```scheme
+(style-underline-style style underline-style) -> Style?
+
+```
+
+style : Style?
+underline-style : UnderlineStyle?
+
+### **UnderlineStyle?**
+
+Check if the provided value is an `UnderlineStyle`.
+
+```scheme
+(UnderlineStyle? value) -> bool?
+
+```
+value : any?
+### **Underline/Reset**
+
+Singleton for resetting the underling style.
+
+### **Underline/Line**
+
+Singleton for the line underline style.
+
+### **Underline/Curl**
+
+Singleton for the curl underline style.
+
+### **Underline/Dotted**
+
+Singleton for the dotted underline style.
+
+### **Underline/Dashed**
+
+Singleton for the dashed underline style.
+
+### **Underline/DoubleLine**
+
+Singleton for the double line underline style.
+
+### **event-result/consume**
+
+Singleton for consuming an event. If this is returned from an event handler, the event
+will not continue to be propagated down the component stack. This also will trigger a
+re-render.
+
+### **event-result/consume-without-rerender**
+
+Singleton for consuming an event. If this is returned from an event handler, the event
+will not continue to be propagated down the component stack. This will _not_ trigger
+a re-render.
+
+### **event-result/ignore**
+
+Singleton for ignoring an event. If this is returned from an event handler, the event
+will not continue to be propagated down the component stack. This will _not_ trigger
+a re-render.
+
+### **event-result/ignore-and-close**
+
+Singleton for ignoring an event. If this is returned from an event handler, the event
+will continue to be propagated down the component stack, and the component will be
+popped off of the stack and removed.
+
+### **event-result/close**
+
+Singleton for consuming an event. If this is returned from an event handler, the event
+will not continue to be propagated down the component stack, and the component will
+be popped off of the stack and removed.
+
+### **style**
+
+Constructs a new default style.
+
+```scheme
+(style) -> Style?
+```
+
+### **Event?**
+Check if this value is an `Event`
+
+```scheme
+(Event? value) -> bool?
+```
+value : any?
+
+### **paste-event?**
+Checks if the given event is a paste event.
+
+```scheme
+(paste-event? event) -> bool?
+```
+
+* event : Event?
+
+
+### **paste-event-string**
+Get the string from the paste event, if it is a paste event.
+
+```scheme
+(paste-event-string event) -> (or string? #false)
+```
+
+* event : Event?
+
+
+### **key-event?**
+Checks if the given event is a key event.
+
+```scheme
+(key-event? event) -> bool?
+```
+
+* event : Event?
+
+### **string->key-event**
+Get a key event from a string
+### **event->key-event**
+Return the key event from an event, if it is one
+### **key-event-char**
+Get the character off of the event, if there is one.
+
+```scheme
+(key-event-char event) -> (or char? #false)
+```
+event : Event?
+
+### **on-key-event-char**
+Get the character off of the key event, if there is one.
+
+```scheme
+(on-key-event-char event) -> (or char? #false)
+```
+event : KeyEvent?
+
+### **key-event-modifier**
+
+Get the key event modifier off of the event, if there is one.
+
+```scheme
+(key-event-modifier event) -> (or int? #false)
+```
+event : Event?
+
+### **key-modifier-ctrl**
+
+The key modifier bits associated with the ctrl key modifier.
+
+### **key-modifier-shift**
+
+The key modifier bits associated with the shift key modifier.
+
+### **key-modifier-alt**
+
+The key modifier bits associated with the alt key modifier.
+
+### **key-modifier-super**
+
+The key modifier bits associated with the super key modifier.
+
+### **key-event-F?**
+Check if this key event is associated with an `F<x>` key, e.g. F1, F2, etc.
+
+```scheme
+(key-event-F? event number) -> bool?
+```
+event : Event?
+number : int?
+
+### **mouse-event?**
+
+Check if this event is a mouse event.
+
+```scheme
+(mouse-event event) -> bool?
+```
+event : Event?
+### **event-mouse-kind**
+Convert the mouse event kind into an integer representing the state.
+
+```scheme
+(event-mouse-kind event) -> (or int? #false)
+```
+
+event : Event?
+
+This is the current mapping today:
+
+```rust
+match kind {
+   helix_view::input::MouseEventKind::Down(MouseButton::Left) => 0,
+   helix_view::input::MouseEventKind::Down(MouseButton::Right) => 1,
+   helix_view::input::MouseEventKind::Down(MouseButton::Middle) => 2,
+   helix_view::input::MouseEventKind::Up(MouseButton::Left) => 3,
+   helix_view::input::MouseEventKind::Up(MouseButton::Right) => 4,
+   helix_view::input::MouseEventKind::Up(MouseButton::Middle) => 5,
+   helix_view::input::MouseEventKind::Drag(MouseButton::Left) => 6,
+   helix_view::input::MouseEventKind::Drag(MouseButton::Right) => 7,
+   helix_view::input::MouseEventKind::Drag(MouseButton::Middle) => 8,
+   helix_view::input::MouseEventKind::Moved => 9,
+   helix_view::input::MouseEventKind::ScrollDown => 10,
+   helix_view::input::MouseEventKind::ScrollUp => 11,
+   helix_view::input::MouseEventKind::ScrollLeft => 12,
+   helix_view::input::MouseEventKind::ScrollRight => 13,
+}
+```
+
+Any unhandled event that does not match this will return `#false`.
+### **event-mouse-row**
+
+
+Get the row from the mouse event, of #false if it isn't a mouse event.
+
+```scheme
+(event-mouse-row event) -> (or int? #false)
+```
+
+event : Event?
+
+
+### **event-mouse-col**
+
+
+Get the col from the mouse event, of #false if it isn't a mouse event.
+
+```scheme
+(event-mouse-row event) -> (or int? #false)
+```
+
+event : Event?
+
+### **mouse-event-within-area?**
+Check whether the given mouse event occurred within a given `Rect`.
+
+```scheme
+(mouse-event-within-area? event area) -> bool?
+```
+
+event : Event?
+area : Rect?
+
+### **key-event-escape?**
+
+Check whether the given event is the key: escape
+
+```scheme
+(key-event-escape? event)
+```
+event: Event?
+### **key-event-backspace?**
+
+Check whether the given event is the key: backspace
+
+```scheme
+(key-event-backspace? event)
+```
+event: Event?
+### **key-event-enter?**
+
+Check whether the given event is the key: enter
+
+```scheme
+(key-event-enter? event)
+```
+event: Event?
+### **key-event-left?**
+
+Check whether the given event is the key: left
+
+```scheme
+(key-event-left? event)
+```
+event: Event?
+### **key-event-right?**
+
+Check whether the given event is the key: right
+
+```scheme
+(key-event-right? event)
+```
+event: Event?
+### **key-event-up?**
+
+Check whether the given event is the key: up
+
+```scheme
+(key-event-up? event)
+```
+event: Event?
+### **key-event-down?**
+
+Check whether the given event is the key: down
+
+```scheme
+(key-event-down? event)
+```
+event: Event?
+### **key-event-home?**
+
+Check whether the given event is the key: home
+
+```scheme
+(key-event-home? event)
+```
+event: Event?
+### **key-event-end?**
+
+Check whether the given event is the key: end
+
+```scheme
+(key-event-end? event)
+```
+event: Event?
+### **key-event-page-up?**
+
+Check whether the given event is the key: page-up
+
+```scheme
+(key-event-page-up? event)
+```
+event: Event?
+### **key-event-page-down?**
+
+Check whether the given event is the key: page-down
+
+```scheme
+(key-event-page-down? event)
+```
+event: Event?
+### **key-event-tab?**
+
+Check whether the given event is the key: tab
+
+```scheme
+(key-event-tab? event)
+```
+event: Event?
+### **key-event-delete?**
+
+Check whether the given event is the key: delete
+
+```scheme
+(key-event-delete? event)
+```
+event: Event?
+### **key-event-insert?**
+
+Check whether the given event is the key: insert
+
+```scheme
+(key-event-insert? event)
+```
+event: Event?
+### **key-event-null?**
+
+Check whether the given event is the key: null
+
+```scheme
+(key-event-null? event)
+```
+event: Event?
+### **key-event-caps-lock?**
+
+Check whether the given event is the key: caps-lock
+
+```scheme
+(key-event-caps-lock? event)
+```
+event: Event?
+### **key-event-scroll-lock?**
+
+Check whether the given event is the key: scroll-lock
+
+```scheme
+(key-event-scroll-lock? event)
+```
+event: Event?
+### **key-event-num-lock?**
+
+Check whether the given event is the key: num-lock
+
+```scheme
+(key-event-num-lock? event)
+```
+event: Event?
+### **key-event-print-screen?**
+
+Check whether the given event is the key: print-screen
+
+```scheme
+(key-event-print-screen? event)
+```
+event: Event?
+### **key-event-pause?**
+
+Check whether the given event is the key: pause
+
+```scheme
+(key-event-pause? event)
+```
+event: Event?
+### **key-event-menu?**
+
+Check whether the given event is the key: menu
+
+```scheme
+(key-event-menu? event)
+```
+event: Event?
+### **key-event-keypad-begin?**
+
+Check whether the given event is the key: keypad-begin
+
+```scheme
+(key-event-keypad-begin? event)
+```
+event: Event?
+# /Users/dmy/.steel/cogs/helix/misc.scm
 ### **hx.cx->pos**
 DEPRECATED: Please use `cursor-position`
 ### **cursor-position**
@@ -752,7 +1376,7 @@ Push a component on to the top of the stack.
 ```
 
 component : WrappedDynComponent?
-       
+
 ### **pop-last-component!**
 DEPRECATED: Please use `pop-last-component-by-name!`
 ### **pop-last-component-by-name!**
@@ -764,7 +1388,17 @@ it removes the component matching this name from the stack.
 ```
 
 name : string?
-       
+
+### **on-key-callback**
+
+Enqueue a function to be run on the next keypress. The function must accept
+a key event as an argument. This currently will only will work if the command is
+called via a keybinding.
+
+### **trigger-on-key-callback**
+
+Trigger an on key callback if it exists with the specified key event.
+
 ### **enqueue-thread-local-callback**
 
 Enqueue a function to be run following this context of execution. This could
@@ -783,7 +1417,7 @@ callback : (-> any?)
 ```scheme
 (enqueue-thread-local-callback (lambda () (theme "focus_nova")))
 ```
-       
+
 ### **set-status!**
 Sets the content of the status line, with the info severity
 ### **set-warning!**
@@ -796,6 +1430,10 @@ The method name corresponds to the method name that you'd expect to see
 with the lsp, and the params can be passed as a hash table. The callback
 provided will be called with whatever result is returned from the LSP,
 deserialized from json to a steel value.
+
+```scheme
+(send-lsp-command lsp-name method-name params callback)
+```
 
 # Example
 ```scheme
@@ -812,6 +1450,10 @@ The method name corresponds to the method name that you'd expect to see
 with the LSP, and the params can be passed as a hash table. Unlike
 `send-lsp-command`, this does not expect a response and is used for
 fire-and-forget notifications.
+
+```scheme
+(send-lsp-notification lsp-name method-name params)
+```
 
 # Example
 ```scheme
@@ -830,7 +1472,7 @@ Send a successful reply to an LSP request with the given result.
 ```
 
 * lsp-name : string? - Name of the language server
-* request-id : string? - ID of the request to respond to  
+* request-id : string? - ID of the request to respond to
 * result : any? - The result value to send back
 
 # Examples
@@ -875,7 +1517,7 @@ callback : (-> any?)
 ```scheme
 (enqueue-thread-local-callback-with-delay 1000 (lambda () (theme "focus_nova"))) ;; Run after 1 second
 ``
-       
+
 ### **helix-await-callback**
 DEPRECATED: Please use `await-callback`
 ### **await-callback**
@@ -932,109 +1574,258 @@ Removes an inlay hint by the id that was associated with the added inlay hints.
 first-line : int?
 last-line : int?
 
-# /home/matt/.steel/cogs/helix/editor.scm
-### **editor-focus**
-
-Get the current focus of the editor, as a `ViewId`.
-
-```scheme
-(editor-focus) -> ViewId
-```
-       
-### **editor-mode**
-
-Get the current mode of the editor
-
-```scheme
-(editor-mode) -> Mode?
-```
-       
-### **string->editor-mode**
-
-Create an editor mode from a string, or false if it string was not one of
-"normal", "insert", or "select"
+# /Users/dmy/.steel/cogs/helix/treesitter.scm
+### **TSTree?**
+Check if the given value is a treesitter tree
+### **TSNode?**
+Check if the given value is a treesitter node
+### **TSQueryLoader?**
+Check if the given value is a treesitter query loader
+### **TSSyntax?**
+Check if the given value is a treesitter query loader
+### **TSQuery?**
+Check if the given value is a treesitter query
+### **TSMatch?**
+Check if the given value is a treesitter match
+### **tsquery-loader**
+Create a query loader with the given function
 
 ```scheme
-(string->editor-mode "normal") -> (or Mode? #f)
+(tsquery-loader fun) -> TSQueryLoader?
 ```
-       
-### **cx->themes**
-DEPRECATED: Please use `themes->list`
-### **themes->list**
 
-Get the current themes as a list of strings.
+* fun : (-> string?) -> (or TSQuery? bool?)
+### **tstree->root**
+Get the root node of the TreeSitter Tree
 
 ```scheme
-(themes->list) -> (listof string?)
+(tstree->root tree) -> TSNode?
 ```
-       
-### **editor-all-documents**
 
-Get a list of all of the document ids that are currently open.
-
+* tree : TSTree?
+### **tsnode->tstree**
+Get the root tree object from the given node
 ```scheme
-(editor-all-documents) -> (listof DocumentId?)
+(tsnode->tstree node) -> TSTree?
 ```
-       
-### **cx->cursor**
-DEPRECATED: Please use `current-cursor`
-### **current-cursor**
-Gets the primary cursor position in screen coordinates,
-or `#false` if the primary cursor is not visible on screen.
 
+* node : TSNode?
+### **tsnode-parent**
+Get the root node of the TreeSitter Tree, returns #f if there is no parent
 ```scheme
-(current-cursor) -> (listof? (or Position? #false) CursorKind)
+(tsnode-parent node) -> (or TSNode? bool?)
 ```
-       
-### **editor-focused-buffer-area**
 
-Get the `Rect` associated with the currently focused buffer.
-
+* node : TSNode?
+### **tsnode-children**
+Get the given node's children
 ```scheme
-(editor-focused-buffer-area) -> (or Rect? #false)
+(tsnode-children node) -> (listof TSNode?)
 ```
-       
-### **selected-register!**
-Get currently selected register
-### **editor->doc-id**
-Get the document from a given view.
-### **editor-switch!**
-Open the document in a vertical split.
-### **editor-set-focus!**
-Set focus on the view.
-### **editor-set-mode!**
-Set the editor mode.
-### **editor-doc-in-view?**
-Check whether the current view contains a document.
-### **set-scratch-buffer-name!**
-Set the name of a scratch buffer.
-### **set-buffer-uri!**
-Set the URI of the buffer
-### **editor-doc-exists?**
-Check if a document exists.
-### **editor-document-last-saved**
-Check when a document was last saved (returns a `SystemTime`)
-### **editor-document->language**
-Get the language for the document
-### **editor-document-dirty?**
-Check if a document has unsaved changes
-### **editor-document-reload**
-Reload a document.
-### **editor->text**
-Get the document as a rope.
-### **editor-document->path**
-Get the path to a document.
-### **register->value**
-Get register value as a list of strings.
-### **set-editor-clip-top!**
-Set the editor clipping at the top.
-### **set-editor-clip-right!**
-Set the editor clipping at the right.
-### **set-editor-clip-left!**
-Set the editor clipping at the left.
-### **set-editor-clip-bottom!**
-Set the editor clipping at the bottom.
-# /home/matt/.steel/cogs/helix/themes.scm
+
+* node : TSNode?
+### **tsnode-named-children**
+Get the given node's (named) children
+```scheme
+(tsnode-named-children node) -> (listof TSNode?)
+```
+
+* node : TSNode?
+### **tsnode-within-byte-range?**
+Return whether or not the given node is within the byte range
+```scheme
+(tsnode-within-byte-range node lower upper) -> bool?
+```
+
+* node : TSNode?
+* lower : (and positive? int?)
+* upper : (and positive? int?)
+### **tsnode-descendant-byte-range**
+Return a descendant node with the largest byte range within the given range on the tree (#f if one doesn't exist)
+```scheme
+(tsnode-descendant-byte-range node lower upper) -> (or TSNode? bool?)
+```
+
+* node : TSNode?
+* lower : (and positive? int?)
+* upper : (and positive? int?)
+### **tsnode-named-descendant-byte-range**
+Return a (named) descendant node with the largest byte range within the given range on the tree (#f if one doesn't exist)
+```scheme
+(tsnode-named-descendant-byte-range node lower upper) -> (or TSNode? bool?)
+```
+
+* node : TSNode?
+* lower : (and positive? int?)
+* upper : (and positive? int?)
+### **tsnode-kind**
+Get the `kind` of a given node as a string
+```scheme
+(tsnode-kind node) -> string?
+```
+
+* node : TSNode?
+### **tsnode-named?**
+Returns whether or not the given node is named
+```scheme
+(tsnode-named? node) -> bool?
+```
+
+* node : TSNode?
+### **tsnode-extra?**
+Returns whether or not the given node is extra
+```scheme
+(tsnode-extra? node) -> bool?
+```
+
+* node : TSNode?
+### **tsnode-missing?**
+Returns whether or not the given node is missing
+```scheme
+(tsnode-missing? node) -> bool?
+```
+
+* node : TSNode?
+### **tsnode-visible?**
+Returns whether or not the given node is visible
+```scheme
+(tsnode-visible? node) -> bool?
+```
+
+* node : TSNode?
+### **tsnode-print-tree**
+Pretty print the given TSNode's subtree
+```scheme
+(tsnode-print-tree node) -> string?
+```
+
+* node : TSNode?
+### **tsnode-end-byte**
+Get the end byte idx of the TSNode's range
+```scheme
+(tsnode-end-byte node) -> (and positive? int?)
+```
+
+* node : TSNode?
+### **tsnode-start-byte**
+Get the start byte idx of the TSNode's range
+```scheme
+(tsnode-start-byte node) -> (and positive? int?)
+```
+
+* node : TSNode?
+### **tsmatch-captures**
+Get a list of captures
+```scheme
+(tsmatch-captures match) -> (listof string?)
+```
+
+* match : TSMatch?
+### **tsmatch-capture**
+Get a list of captures from the given capture group
+```scheme
+(tsmatch-capture match capture) -> (or (listof TSNode?) bool?)
+```
+
+* match : TSMatch?
+* capture : string?
+### **tssyntax->tree-byte-range**
+Get the subtree from the given byte range and TSSyntax (#f if no tree is found/available)
+```scheme
+(tssyntax->tree-byte-range syntax lower upper) -> (or TSTree? bool?)
+```
+
+* syntax : TSSyntax?
+* lower : (and positive? int?)
+* upper : (and positive? int?)
+### **tssyntax->layers-byte-range**
+Get the corresponding parse trees/layers that contain the given byte range
+```scheme
+(tssyntax->layers-byte-range syntax lower upper) -> (or (listof TSTree?) bool?)
+```
+* syntax : TSSyntax?
+* lower : (and int? positive?)
+* upper : (and int? positive?)
+### **tssyntax->tree**
+Get the root subtree from the given TSSyntax
+```scheme
+(tssyntax->tree syntax) -> TSTree?
+```
+
+* syntax : TSSyntax?
+### **document->tree**
+
+### **document->tree-byte-range**
+Get the full treesitter tree with a byte range from the given document (not necessarily the full parse tree)
+```scheme
+(document->tree-byte-range doc-id lower upper) -> (or TSTree? bool?)
+```
+* doc-id : DocumentId?
+* lower : (and int? positive?)
+* upper : (and int? positive?)
+### **document->layers-byte-range**
+Get the corresponding parse trees/layers that contain the given byte range
+```scheme
+(document->layers-byte-range doc-id lower upper) -> (listof TSTree?)
+```
+* doc-id : DocumentId?
+* lower : (and int? positive?)
+* upper : (and int? positive?)
+### **tstree->language**
+Get the language as a string from a given TSTree
+```scheme
+(tstree->language tree) -> string?
+```
+* tree : TSTree?
+### **query-document**
+Run a treesitter query on a given document's parse tree
+```scheme
+(query-document query-loader doc-id) -> (or TSMatch? bool?)
+```
+* query-loader : TSQueryLoader?
+* doc-id : DocumentId?
+### **query-document-byte-range**
+Run a treesitter query on a given document's parse tree with a range (byte indices)
+```scheme
+(query-document-byte-range query-loader doc-id lower upper) -> (or TSMatch? bool?)
+```
+* query-loader : TSQueryLoader?
+* doc-id : DocumentId?
+* lower : (and int? positive?)
+* upper : (and int? positive?)
+### **string->tsquery**
+Create a new treesitter query given a language name and source
+```scheme
+(string->tsquery lang-name query_src) -> (or TSQuery? bool?)
+```
+* lang-name : string?
+* query_src : string?
+### **query-tssyntax-byte-range**
+Run a query on the given TSSyntax parse tree with a byte range
+```scheme
+(query-tssyntax-byte-range query-loader syntax text lower upper) -> TSMatch?
+```
+* query-loader : TSQueryLoader?
+* syntax : TSSyntax?
+* text : Rope?
+* lower : (and int? positive?)
+* upper : (and int? positive?)
+### **query-tssyntax**
+Run a treesitter query on a given document's parse tree
+```scheme
+(query-tssyntax query-loader syntax text) -> TSMatch?
+```
+* query : TSQueryLoader?
+* syntax : TSSyntax?
+* text : Rope?
+### **rope->tssyntax**
+Parse the syntax tree from given a language name and source
+```scheme
+(rope->tssyntax src lang) -> (or TSQuery? bool?)
+```
+* src : Rope?
+* lang : string?
+# /Users/dmy/.steel/cogs/helix/themes.scm
 ### **register-theme**
 Register this theme with helix for use
 ### **attribute**
@@ -1345,7 +2136,79 @@ Diagnostics error (editing area)
 Diagnostics with unnecessary tag (editing area)
 ### **diagnostic.deprecated**
 Diagnostics with deprecated tag (editing area)
-# /home/matt/.steel/cogs/helix/static.scm
+# /Users/dmy/.steel/cogs/helix/static.scm
+### **insert_char**
+Insert a given character at the cursor cursor position
+### **insert_string**
+Insert a given string at the current cursor position
+### **set-current-selection-object!**
+Update the selection object to the current selection within the editor
+### **push-range-to-selection!**
+Push a new range to a selection. The new selection will be the primary one
+### **set-current-selection-primary-index!**
+Set the primary index of the current selection
+### **remove-current-selection-range!**
+Remove a range from the current selection
+### **regex-selection**
+Run the given regex within the existing buffer
+### **replace-selection-with**
+Replace the existing selection with the given string
+### **enqueue-expression-in-engine**
+Enqueue an expression to run at the top level context,
+       after the existing function context has exited.
+### **get-current-line-character**
+Returns the current column number with the given position encoding
+### **cx->current-file**
+Get the currently focused file path
+### **current_selection**
+Returns the current selection as a string
+### **current-selection->string**
+Returns the current selection as a string
+### **load-buffer!**
+Evaluates the current buffer
+### **current-highlighted-text!**
+Returns the currently highlighted text as a string
+### **get-current-line-number**
+Returns the current line number
+### **get-current-column-number**
+Returns the visual current column number of unicode graphemes
+### **current-selection-object**
+Returns the current selection object
+### **get-helix-cwd**
+Returns the current working directly that helix is using
+### **move-window-far-left**
+Moves the current window to the far left
+### **move-window-far-right**
+Moves the current window to the far right
+### **selection->primary-index**
+Returns index of the primary selection
+### **selection->primary-range**
+Returns the range for primary selection
+### **selection->ranges**
+Returns all ranges of the selection
+### **range-anchor**
+Get the anchor of the range: the side that doesn't move when extending.
+### **range->from**
+Get the start of the range
+### **range-head**
+Get the head of the range, moved when extending.
+### **range->to**
+Get the end of the range
+### **range->span**
+Get the span of the range (from, to)
+### **range**
+Construct a new range object
+
+```scheme
+(range anchor head) -> Range?
+```
+
+### **range->selection**
+Convert a range into a selection
+### **get-helix-scm-path**
+Returns the path to the helix.scm file as a string
+### **get-init-scm-path**
+Returns the path to the init.scm file as a string
 ### **no_op**
 Do nothing
 ### **move_char_left**
@@ -1972,1183 +2835,730 @@ Goto next snippet placeholder
 Make the first selection your primary one
 ### **rotate_selections_last**
 Make the last selection your primary one
-### **insert_char**
-Insert a given character at the cursor cursor position
-### **insert_string**
-Insert a given string at the current cursor position
-### **set-current-selection-object!**
-Update the selection object to the current selection within the editor
-### **push-range-to-selection!**
-Push a new range to a selection. The new selection will be the primary one
-### **set-current-selection-primary-index!**
-Set the primary index of the current selection
-### **remove-current-selection-range!**
-Remove a range from the current selection
-### **regex-selection**
-Run the given regex within the existing buffer
-### **replace-selection-with**
-Replace the existing selection with the given string
-### **enqueue-expression-in-engine**
-Enqueue an expression to run at the top level context, 
-       after the existing function context has exited.
-### **get-current-line-character**
-Returns the current column number with the given position encoding
-### **cx->current-file**
-Get the currently focused file path
-### **current_selection**
-Returns the current selection as a string
-### **current-selection->string**
-Returns the current selection as a string
-### **load-buffer!**
-Evaluates the current buffer
-### **current-highlighted-text!**
-Returns the currently highlighted text as a string
-### **get-current-line-number**
-Returns the current line number
-### **get-current-column-number**
-Returns the visual current column number of unicode graphemes
-### **current-selection-object**
-Returns the current selection object
-### **get-helix-cwd**
-Returns the current working directly that helix is using
-### **move-window-far-left**
-Moves the current window to the far left
-### **move-window-far-right**
-Moves the current window to the far right
-### **selection->primary-index**
-Returns index of the primary selection
-### **selection->primary-range**
-Returns the range for primary selection
-### **selection->ranges**
-Returns all ranges of the selection
-### **range-anchor**
-Get the anchor of the range: the side that doesn't move when extending.
-### **range->from**
-Get the start of the range
-### **range-head**
-Get the head of the range, moved when extending.
-### **range->to**
-Get the end of the range
-### **range->span**
-Get the span of the range (from, to)
-### **range**
-Construct a new range object
-
-```scheme
-(range anchor head) -> Range?
-```
-       
-### **range->selection**
-Convert a range into a selection
-### **get-helix-scm-path**
-Returns the path to the helix.scm file as a string
-### **get-init-scm-path**
-Returns the path to the init.scm file as a string
-# /home/matt/.steel/cogs/helix/ext.scm
-### **eval-buffer**
-Eval the current buffer, morally equivalent to load-buffer!
-### **evalp**
-Eval prompt
-### **running-on-main-thread?**
-Check what the main thread id is, compare to the main thread
-### **hx.with-context**
-If running on the main thread already, just do nothing.
-Check the ID of the engine, and if we're already on the
-main thread, just continue as is - i.e. just block. This does
-not block on the function if this is running on another thread.
-
-```scheme
-(hx.with-context thunk)
-```
-thunk : (-> any?) ;; Function that has no arguments
-
-# Examples
-```scheme
-(spawn-native-thread
-  (lambda () 
-    (hx.with-context (lambda () (theme "nord")))))
-```
-### **hx.block-on-task**
-Block on the given function.
-```scheme
-(hx.block-on-task thunk)
-```
-thunk : (-> any?) ;; Function that has no arguments
-
-# Examples
-```scheme
-(define thread
-  (spawn-native-thread
-    (lambda () 
-      (hx.block-on-task (lambda () (theme "nord") 10)))))
-
-;; Some time later, in a different context - if done at the same time,
-;; this will deadline, since the join depends on the callback previously
-;; executing.
-(equal? (thread-join! thread) 10) ;; => #true
-```
-# /home/matt/.steel/cogs/helix/components.scm
-### **theme->bg**
-Gets the `Style` associated with the bg for the current theme
-### **theme->fg**
-Gets the `style` associated with the fg for the current theme
-### **theme-scope**
-Get the `Style` associated with the given scope from the current theme
-### **Position?**
-Check if the given value is a `Position`
-
-```scheme
-(Position? value) -> bool?
-```
-
-value : any?
-
-       
-### **Style?**
-Check if the given valuie is `Style`
-
-```scheme
-(Style? value) -> bool?
-```
-
-value : any?
-### **Buffer?**
-
-Checks if the given value is a `Buffer`
-
-```scheme
-(Buffer? value) -> bool?
-```
-
-value : any?
-       
-### **buffer-area**
-
-Get the `Rect` associated with the given `Buffer`
-
-```scheme
-(buffer-area buffer)
-```
-
-* buffer : Buffer?
-       
-### **frame-set-string!**
-
-Set the string at the given `x` and `y` positions for the given `Buffer`, with a provided `Style`.
-
-```scheme
-(frame-set-string! buffer x y string style)
-```
-
-buffer : Buffer?,
-x : int?,
-y : int?,
-string: string?,
-style: Style?,
-       
-### **SteelEventResult?**
-
-Check whether the given value is a `SteelEventResult`.
-
-```scheme
-(SteelEventResult? value) -> bool?
-```
-
-value : any?
-
-       
-### **new-component!**
-
-Construct a new dynamic component. This is used for creating widgets or floating windows
-that exist outside of the buffer. This just constructs the component, it does not push the component
-on to the component stack. For that, you'll use `push-component!`.
-
-```scheme
-(new-component! name state render function-map)
-```
-
-name : string? - This is the name of the comoponent itself.
-state : any? - Typically this is a struct that holds the state of the component.
-render : (-> state? Rect? Buffer?)
-   This is a function that will get called with each frame. The first argument is the state object provided,
-   and the second is the `Rect?` to render against, ultimately against the `Buffer?`.
-
-function-map : (hashof string? function?)
-   This is a hashmap of strings -> function that contains a few important functions:
-
-   "handle_event" : (-> state? Event?) -> SteelEventResult?
-
-       This is called on every event with an event object. There are multiple options you can use
-       when returning from this function:
-
-       * event-result/consume
-       * event-result/consume-without-rerender
-       * event-result/ignore
-       * event-result/close
-
-       See the associated docs for those to understand the implications for each.
-       
-   "cursor" : (-> state? Rect?) -> Position?
-
-       This tells helix where to put the cursor.
-   
-   "required_size": (-> state? (pair? int?)) -> (pair? int?)
-
-       Seldom used: TODO
-   
-### **position**
-
-Construct a new `Position`.
-
-```scheme
-(position row col) -> Position?
-```
-
-row : int?
-col : int?
-       
-### **position-row**
-
-Get the row associated with the given `Position`.
-
-```scheme
-(position-row pos) -> int?
-```
-
-pos : `Position?`
-       
-### **position-col**
-
-Get the col associated with the given `Position`.
-
-```scheme
-(position-col pos) -> int?
-```
-
-pos : `Position?`
-### **set-position-row!**
-Set the row for the given `Position`
-
-```scheme
-(set-position-row! pos row)
-```
-
-pos : Position?
-row : int?
-       
-### **set-position-col!**
-Set the col for the given `Position`
-
-```scheme
-(set-position-col! pos col)
-```
-
-pos : Position?
-col : int?
-       
-### **Rect?**
-Check if the given value is a `Rect`
-
-```scheme
-(Rect? value) -> bool?
-```
-
-value : any?
-
-       
-### **area**
-
-Constructs a new `Rect`.
-
-(area x y width height)
-
-* x : int?
-* y : int?
-* width: int?
-* height: int?
-
-# Examples
-
-```scheme
-(area 0 0 100 200)
-```
-### **area-x**
-Get the `x` value of the given `Rect`
-
-```scheme
-(area-x area) -> int?
-```
-
-area : Rect?
-       
-### **area-y**
-Get the `y` value of the given `Rect`
-
-```scheme
-(area-y area) -> int?
-```
-
-area : Rect?
-       
-### **area-width**
-Get the `width` value of the given `Rect`
-
-```scheme
-(area-width area) -> int?
-```
-
-area : Rect?
-       
-### **area-height**
-Get the `height` value of the given `Rect`
-
-```scheme
-(area-height area) -> int?
-```
-
-area : Rect?
-       
-### **Widget/list?**
-Check whether the given value is a list widget.
-
-```scheme
-(Widget/list? value) -> bool?
-```
-
-value : any?
-       
-### **widget/list**
-Creates a new `List` widget with the given items.
-
-```scheme
-(widget/list lst) -> Widget?
-```
-
-* lst : (listof string?)
-       
-### **widget/list/render**
-
-
-Render the given `Widget/list` onto the provided `Rect` within the given `Buffer`.
-
-```scheme
-(widget/list/render buf area lst)
-```
-
-* buf : `Buffer?`
-* area : `Rect?`
-* lst : `Widget/list?`
-       
-### **block**
-Creates a block with the following styling:
-
-```scheme
-(block)
-```
-
-* borders - all
-* border-style - default style + white fg
-* border-type - rounded
-* style - default + black bg
-       
-### **make-block**
-
-Create a `Block` with the provided styling, borders, and border type.
-
-
-```scheme
-(make-block style border-style borders border_type)
-```
-
-* style : Style?
-* border-style : Style?
-* borders : string?
-* border-type: String?
-
-Valid border-types include:
-* "plain"
-* "rounded"
-* "double"
-* "thick"
-
-Valid borders include:
-* "top"
-* "left"
-* "right"
-* "bottom"
-* "all"
-       
-### **block/render**
-
-Render the given `Block` over the given `Rect` onto the provided `Buffer`.
-
-```scheme
-(block/render buf area block)
-```
-
-buf : Buffer?
-area: Rect?
-block: Block?
-           
-       
-### **buffer/clear**
-Clear a `Rect` in the `Buffer`
-
-```scheme
-(buffer/clear area)
-```
-
-area : Rect?
-       
-### **buffer/clear-with**
-Clear a `Rect` in the `Buffer` with a default `Style`
-
-```scheme
-(buffer/clear-with area style)
-```
-
-area : Rect?
-style : Style?
-       
-### **set-color-rgb!**
-
-Mutate the r/g/b of a color in place, to avoid allocation.
-
-```scheme
-(set-color-rgb! color r g b)
-```
-
-color : Color?
-r : int?
-g : int?
-b : int?
-### **set-color-indexed!**
-
-Mutate this color to be an indexed color.
-
-```scheme
-(set-color-indexed! color index)
-```
-
-color : Color?
-index: int?
-   
-### **Color?**
-Check if the given value is a `Color`.
-
-```scheme
-(Color? value) -> bool?
-```
-
-value : any?
-
-       
-### **Color/Reset**
-
-Singleton for the reset color.
-       
-### **Color/Black**
-
-Singleton for the color black.
-       
-### **Color/Red**
-
-Singleton for the color red.
-       
-### **Color/White**
-
-Singleton for the color white.
-       
-### **Color/Green**
-
-Singleton for the color green.
-       
-### **Color/Yellow**
-
-Singleton for the color yellow.
-       
-### **Color/Blue**
-
-Singleton for the color blue.
-       
-### **Color/Magenta**
-
-Singleton for the color magenta.
-       
-### **Color/Cyan**
-
-Singleton for the color cyan.
-       
-### **Color/Gray**
-
-Singleton for the color gray.
-       
-### **Color/LightRed**
-
-Singleton for the color light read.
-       
-### **Color/LightGreen**
-
-Singleton for the color light green.
-       
-### **Color/LightYellow**
-
-Singleton for the color light yellow.
-       
-### **Color/LightBlue**
-
-Singleton for the color light blue.
-       
-### **Color/LightMagenta**
-
-Singleton for the color light magenta.
-       
-### **Color/LightCyan**
-
-Singleton for the color light cyan.
-       
-### **Color/LightGray**
-
-Singleton for the color light gray.
-       
-### **Color/rgb**
-
-Construct a new color via rgb.
-
-```scheme
-(Color/rgb r g b) -> Color?
-```
-
-r : int?
-g : int?
-b : int?
-       
-### **Color-red**
-
-Get the red component of the `Color?`.
-
-```scheme
-(Color-red color) -> int?
-```
-
-color * Color?
-       
-### **Color-green**
-
-Get the green component of the `Color?`.
-
-```scheme
-(Color-green color) -> int?
-```
-
-color * Color?
-### **Color-blue**
-
-Get the blue component of the `Color?`.
-
-```scheme
-(Color-blue color) -> int?
-```
-
-color * Color?
-### **Color/Indexed**
-
-
-Construct a new indexed color.
-
-```scheme
-(Color/Indexed index) -> Color?
-```
-
-* index : int?
-       
-### **set-style-fg!**
-
-
-Mutates the given `Style` to have the fg with the provided color.
-
-```scheme
-(set-style-fg! style color)
-```
-
-style : `Style?`
-color : `Color?`
-       
-### **style-fg**
-
-
-Constructs a new `Style` with the provided `Color` for the fg.
-
-```scheme
-(style-fg style color) -> Style
-```
-
-style : Style?
-color: Color?
-       
-### **style-bg**
-
-
-Constructs a new `Style` with the provided `Color` for the bg.
-
-```scheme
-(style-bg style color) -> Style
-```
-
-style : Style?
-color: Color?
-       
-### **style-with-italics**
-
-
-Constructs a new `Style` with italcs.
-
-```scheme
-(style-with-italics style) -> Style
-```
-
-style : Style?
-       
-### **style-with-bold**
-
-
-Constructs a new `Style` with bold styling.
-
-```scheme
-(style-with-bold style) -> Style
-```
-
-style : Style?
-       
-### **style-with-dim**
-
-
-Constructs a new `Style` with dim styling.
-
-```scheme
-(style-with-dim style) -> Style
-```
-
-style : Style?
-       
-### **style-with-slow-blink**
-
-
-Constructs a new `Style` with slow blink.
-
-```scheme
-(style-with-slow-blink style) -> Style
-```
-
-style : Style?
-       
-### **style-with-rapid-blink**
-
-
-Constructs a new `Style` with rapid blink.
-
-```scheme
-(style-with-rapid-blink style) -> Style
-```
-
-style : Style?
-       
-### **style-with-reversed**
-
-
-Constructs a new `Style` with revered styling.
-
-```scheme
-(style-with-reversed style) -> Style
-```
-
-style : Style?
-       
-### **style-with-hidden**
-
-Constructs a new `Style` with hidden styling.
-
-```scheme
-(style-with-hidden style) -> Style
-```
-
-style : Style?
-       
-### **style-with-crossed-out**
-
-
-Constructs a new `Style` with crossed out styling.
-
-```scheme
-(style-with-crossed-out style) -> Style
-```
-
-style : Style?
-       
-### **style->fg**
-
-
-Return the color on the style, or #false if not present.
-
-```scheme
-(style->fg style) -> (or Color? #false)
-```
-
-style : Style?
-           
-       
-### **style->bg**
-
-
-Return the color on the style, or #false if not present.
-
-```scheme
-(style->bg style) -> (or Color? #false)
-```
-
-style : Style?
-           
-       
-### **set-style-bg!**
-
-
-Mutate the background style on the given style to a given color.
-
-```scheme
-(set-style-bg! style color)
-```
-
-style : Style?
-color : Color?
-           
-       
-### **style-underline-color**
-
-
-Return a new style with the provided underline color.
-
-```scheme
-(style-underline-color style color) -> Style?
-
-```
-style : Style?
-color : Color?
-           
-       
-### **style-underline-style**
-
-Return a new style with the provided underline style.
-
-```scheme
-(style-underline-style style underline-style) -> Style?
-
-```
-
-style : Style?
-underline-style : UnderlineStyle?
-
-### **UnderlineStyle?**
-
-Check if the provided value is an `UnderlineStyle`.
-
-```scheme
-(UnderlineStyle? value) -> bool?
-
-```
-value : any?
-### **Underline/Reset**
-
-Singleton for resetting the underling style.
-       
-### **Underline/Line**
-
-Singleton for the line underline style.
-       
-### **Underline/Curl**
-
-Singleton for the curl underline style.
-       
-### **Underline/Dotted**
-
-Singleton for the dotted underline style.
-       
-### **Underline/Dashed**
-
-Singleton for the dashed underline style.
-       
-### **Underline/DoubleLine**
-
-Singleton for the double line underline style.
-       
-### **event-result/consume**
-
-Singleton for consuming an event. If this is returned from an event handler, the event
-will not continue to be propagated down the component stack. This also will trigger a
-re-render.
-       
-### **event-result/consume-without-rerender**
-
-Singleton for consuming an event. If this is returned from an event handler, the event
-will not continue to be propagated down the component stack. This will _not_ trigger
-a re-render.
-       
-### **event-result/ignore**
-
-Singleton for ignoring an event. If this is returned from an event handler, the event
-will not continue to be propagated down the component stack. This will _not_ trigger
-a re-render.
-       
-### **event-result/ignore-and-close**
-
-Singleton for ignoring an event. If this is returned from an event handler, the event
-will continue to be propagated down the component stack, and the component will be
-popped off of the stack and removed.
-       
-### **event-result/close**
-
-Singleton for consuming an event. If this is returned from an event handler, the event
-will not continue to be propagated down the component stack, and the component will
-be popped off of the stack and removed.
-       
-### **style**
-
-Constructs a new default style.
-
-```scheme
-(style) -> Style?
-```
-       
-### **Event?**
-Check if this value is an `Event`
-
-```scheme
-(Event? value) -> bool?
-```
-value : any?
-       
-### **paste-event?**
-Checks if the given event is a paste event.
-
-```scheme
-(paste-event? event) -> bool?
-```
-
-* event : Event?
-           
-       
-### **paste-event-string**
-Get the string from the paste event, if it is a paste event.
-
-```scheme
-(paste-event-string event) -> (or string? #false)
-```
-
-* event : Event?
-
-       
-### **key-event?**
-Checks if the given event is a key event.
-
-```scheme
-(key-event? event) -> bool?
-```
-
-* event : Event?
-       
-### **string->key-event**
-Get a key event from a string
-### **event->key-event**
-Return the key event from an event, if it is one
-### **key-event-char**
-Get the character off of the event, if there is one.
-
-```scheme
-(key-event-char event) -> (or char? #false)
-```
-event : Event?
-       
-### **key-event-modifier**
-
-Get the key event modifier off of the event, if there is one.
-
-```scheme
-(key-event-modifier event) -> (or int? #false)
-```
-event : Event?
-       
-### **key-modifier-ctrl**
-
-The key modifier bits associated with the ctrl key modifier.
-       
-### **key-modifier-shift**
-
-The key modifier bits associated with the shift key modifier.
-       
-### **key-modifier-alt**
-
-The key modifier bits associated with the alt key modifier.
-       
-### **key-modifier-super**
-
-The key modifier bits associated with the super key modifier.
-       
-### **key-event-F?**
-Check if this key event is associated with an `F<x>` key, e.g. F1, F2, etc.
-
-```scheme
-(key-event-F? event number) -> bool?
-```
-event : Event?
-number : int?
-       
-### **mouse-event?**
-
-Check if this event is a mouse event.
-
-```scheme
-(mouse-event event) -> bool?
-```
-event : Event?
-### **event-mouse-kind**
-Convert the mouse event kind into an integer representing the state.
-
-```scheme
-(event-mouse-kind event) -> (or int? #false)
-```
-
-event : Event?
-
-This is the current mapping today:
-
+# /Users/dmy/.steel/cogs/helix/keymaps.scm
+### ***reverse-buffer-map-insert***
+Insert a value into the reverse buffer map
+### **set-global-buffer-or-extension-keymap**
+Check that the types on this map check out, otherwise we don't need to consistently do these checks
+### **query-global-keymap**
+Query the global keybindings.
+
+```scheme
+(query-global-keymap "normal" '("space" "f")) ;; => "file_picker"
+```
+### **add-global-keybinding**
+Add keybinding to the global default
+### **deep-copy-global-keybindings**
+Deep copy the global keymap
+### **keymap**
+# /Users/dmy/.steel/cogs/helix/configuration.scm
+### **statusline**
+Configuration of the statusline elements.
+The following status line elements can be configured:
+
+Key	                        Description
+-------------------------------------------------------------------------------------------
+mode	                        The current editor mode (mode.normal/mode.insert/mode.select)
+spinner	                    A progress spinner indicating LSP activity
+file-name	                The path/name of the opened file
+file-absolute-path	        The absolute path/name of the opened file
+file-base-name	            The basename of the opened file
+file-modification-indicator	The indicator to show whether the file is modified (a [+] appears when there are unsaved changes)
+file-encoding	            The encoding of the opened file if it differs from UTF-8
+file-line-ending	            The file line endings (CRLF or LF)
+file-indent-style	        The file indentation style
+read-only-indicator	        An indicator that shows [readonly] when a file cannot be written
+total-line-numbers	        The total line numbers of the opened file
+file-type	                The type of the opened file
+diagnostics	                The number of warnings and/or errors
+workspace-diagnostics	    The number of warnings and/or errors on workspace
+selections	                The primary selection index out of the number of active selections
+primary-selection-length	    The number of characters currently in primary selection
+position	                    The cursor position
+position-percentage	        The cursor position as a percentage of the total number of lines
+separator	                The string defined in editor.statusline.separator (defaults to "│")
+spacer	                    Inserts a space between elements (multiple/contiguous spacers may be specified)
+version-control	            The current branch name or detached commit hash of the opened workspace
+register	                    The current selected register
+### **indent-heuristic**
+Which indent heuristic to use when a new line is inserted
+Defaults to `"hybrid"`
+Valid options are:
+* "simple"
+* "tree-sitter"
+* "hybrid"
+### **atomic-save**
+Whether to use atomic operations to write documents to disk.
+This prevents data loss if the editor is interrupted while writing the file, but may
+confuse some file watching/hot reloading programs. Defaults to `#true`.
+### **lsp**
+Blanket LSP configuration
+The options are provided in a hashmap, and provided options will be merged
+with the defaults. The options are as follows:
+
+Enables LSP
+* enable: bool
+
+Display LSP messagess from $/progress below statusline
+* display-progress-messages: bool
+
+Display LSP messages from window/showMessage below statusline
+* display-messages: bool
+
+Enable automatic pop up of signature help (parameter hints)
+* auto-signature-help: bool
+
+Display docs under signature help popup
+* display-signature-help-docs: bool
+
+Display inlay hints
+* display-inlay-hints: bool
+
+Maximum displayed length of inlay hints (excluding the added trailing `…`).
+If it's `None`, there's no limit
+* inlay-hints-length-limit: Option<NonZeroU8>
+
+Display document color swatches
+* display-color-swatches: bool
+
+Whether to enable snippet support
+* snippets: bool
+
+Whether to include declaration in the goto reference query
+* goto_reference_include_declaration: bool
+
+```scheme
+(lsp (hash 'display-inlay-hints #t))
+```
+
+The defaults shown from the rust side are as follows:
 ```rust
-match kind {
-   helix_view::input::MouseEventKind::Down(MouseButton::Left) => 0,
-   helix_view::input::MouseEventKind::Down(MouseButton::Right) => 1,
-   helix_view::input::MouseEventKind::Down(MouseButton::Middle) => 2,
-   helix_view::input::MouseEventKind::Up(MouseButton::Left) => 3,
-   helix_view::input::MouseEventKind::Up(MouseButton::Right) => 4,
-   helix_view::input::MouseEventKind::Up(MouseButton::Middle) => 5,
-   helix_view::input::MouseEventKind::Drag(MouseButton::Left) => 6,
-   helix_view::input::MouseEventKind::Drag(MouseButton::Right) => 7,
-   helix_view::input::MouseEventKind::Drag(MouseButton::Middle) => 8,
-   helix_view::input::MouseEventKind::Moved => 9,
-   helix_view::input::MouseEventKind::ScrollDown => 10,
-   helix_view::input::MouseEventKind::ScrollUp => 11,
-   helix_view::input::MouseEventKind::ScrollLeft => 12,
-   helix_view::input::MouseEventKind::ScrollRight => 13,
-}
+        LspConfig {
+           enable: true,
+           display_progress_messages: false,
+           display_messages: true,
+           auto_signature_help: true,
+           display_signature_help_docs: true,
+           display_inlay_hints: false,
+           inlay_hints_length_limit: None,
+           snippets: true,
+           goto_reference_include_declaration: true,
+           display_color_swatches: true,
+       }
+
 ```
-
-Any unhandled event that does not match this will return `#false`.
-### **event-mouse-row**
-
-
-Get the row from the mouse event, of #false if it isn't a mouse event.
+### **search**
+Search configuration
+Accepts two keywords, #:smart-case and #:wrap-around, both default to true.
 
 ```scheme
-(event-mouse-row event) -> (or int? #false)
+(search #:smart-case #t #:wrap-around #t)
+(search #:smart-case #f #:wrap-around #f)
 ```
-
-event : Event?
-           
-       
-### **event-mouse-col**
-
-
-Get the col from the mouse event, of #false if it isn't a mouse event.
+### **auto-pairs**
+Automatic insertion of pairs to parentheses, brackets,
+etc. Optionally, this can be a list of pairs to specify a
+global list of characters to pair, or a hashmap of character to character.
+Defaults to true.
 
 ```scheme
-(event-mouse-row event) -> (or int? #false)
+(auto-pairs #f)
+(auto-pairs #t)
+(auto-pairs (list '(#\{ . #\})))
+(auto-pairs (list '(#\{ #\})))
+(auto-pairs (list (cons #\{ #\})))
+(auto-pairs (hash #\{ #\}))
 ```
-
-event : Event?
-       
-### **mouse-event-within-area?**
-Check whether the given mouse event occurred within a given `Rect`.
+### **continue-comments**
+Whether comments should be continued.
+### **popup-border**
+Set the popup border.
+Valid options are:
+* "none"
+* "all"
+* "popup"
+* "menu"
+### **register-lsp-notification-handler**
+Register a callback to be called on LSP notifications sent from the server -> client
+that aren't currently handled by Helix as a built in.
 
 ```scheme
-(mouse-event-within-area? event area) -> bool?
+(register-lsp-notification-handler lsp-name event-name handler)
 ```
 
-event : Event?
-area : Rect?
-       
-### **key-event-escape?**
+* lsp-name : string?
+* event-name : string?
+* function : (-> hash? any?) ;; Function where the first argument is the parameters
 
-Check whether the given event is the key: escape
+# Examples
+```
+(register-lsp-notification-handler "dart"
+                                   "dart/textDocument/publishClosingLabels"
+                                   (lambda (args) (displayln args)))
+```
+### **register-lsp-call-handler**
+Register a callback to be called on LSP calls sent from the server -> client
+that aren't currently handled by Helix as a built in.
 
 ```scheme
-(key-event-escape? event)
+(register-lsp-call-handler lsp-name event-name handler)
 ```
-event: Event?
-### **key-event-backspace?**
 
-Check whether the given event is the key: backspace
+* lsp-name : string?
+* event-name : string?
+* function : (-> hash? any?) ;; Function where the first argument is the parameters
+
+# Examples
+```
+(register-lsp-call-handler "dart"
+                                   "dart/textDocument/publishClosingLabels"
+                                   (lambda (call-id args) (displayln args)))
+```
+### **define-lsp**
+Syntax:
+
+Registers an lsp configuration. This is a thin wrapper around passing
+a hashmap manually to `set-lsp-config!`, and has a slightly more elegant
+API.
+
+Examples:
+```scheme
+(define-lsp "steel-language-server" (command steel-language-server) (args '()))
+(define-lsp "rust-analyzer" (config (experimental (hash 'testExplorer #t 'runnables '("cargo")))))
+(define-lsp "tinymist" (config (exportPdf "onType") (outputPath "$root/$dir/$name")))
+```
+### **cursor-shape**
+Shape for cursor in each mode
+
+(cursor-shape #:normal (normal 'block)
+              #:select (select 'block)
+              #:insert (insert 'block))
+
+# Examples
 
 ```scheme
-(key-event-backspace? event)
+(cursor-shape #:normal 'block #:select 'underline #:insert 'bar)
 ```
-event: Event?
-### **key-event-enter?**
+### **get-lsp-config**
+Get the lsp configuration for a language server.
 
-Check whether the given event is the key: enter
+Returns a hashmap which can be passed to `set-lsp-config!`
+### **set-lsp-config!**
+Sets the language server config for a specific language server.
 
 ```scheme
-(key-event-enter? event)
+(set-lsp-config! lsp config)
 ```
-event: Event?
-### **key-event-left?**
+* lsp : string?
+* config: hash?
 
-Check whether the given event is the key: left
+This will overlay the existing configuration, much like the existing
+toml definition does.
+
+Available options for the config hash are:
+```scheme
+(hash "command" "<command>"
+      "args" (list "args" ...)
+      "environment" (hash "ENV" "VAR" ...)
+      "config" (hash ...)
+      "timeout" 100 ;; number
+      "required-root-patterns" (listof "pattern" ...))
+
+```
+
+# Examples
+```
+(set-lsp-config! "jdtls"
+   (hash "args" (list "-data" "/home/matt/code/java-scratch/workspace")))
+```
+### **file-picker-kw**
+Sets the configuration for the file picker using keywords.
 
 ```scheme
-(key-event-left? event)
+(file-picker-kw #:hidden #t
+                #:follow-symlinks #t
+                #:deduplicate-links #t
+                #:parents #t
+                #:ignore #t
+                #:git-ignore #t
+                #:git-exclude #t
+                #:git-global #t
+                #:max-depth #f) ;; Expects either #f or an int?
 ```
-event: Event?
-### **key-event-right?**
+By default, max depth is `#f` while everything else is an int?
 
-Check whether the given event is the key: right
+To use this, call this in your `init.scm` or `helix.scm`:
+
+# Examples
+```scheme
+(file-picker-kw #:hidden #f)
+```
+### **file-picker**
+Sets the configuration for the file picker using var args.
 
 ```scheme
-(key-event-right? event)
+(file-picker . args)
 ```
-event: Event?
-### **key-event-up?**
 
-Check whether the given event is the key: up
+The args are expected to be something of the value:
+```scheme
+(-> FilePickerConfiguration? bool?)
+```
+
+These other functions in this module which follow this behavior are all
+prefixed `fp-`, and include:
+
+* fp-hidden
+* fp-follow-symlinks
+* fp-deduplicate-links
+* fp-parents
+* fp-ignore
+* fp-git-ignore
+* fp-git-global
+* fp-git-exclude
+* fp-max-depth
+
+By default, max depth is `#f` while everything else is an int?
+
+To use this, call this in your `init.scm` or `helix.scm`:
+
+# Examples
+```scheme
+(file-picker (fp-hidden #f) (fp-parents #f))
+```
+### **soft-wrap-kw**
+Sets the configuration for soft wrap using keyword args.
 
 ```scheme
-(key-event-up? event)
+(soft-wrap-kw #:enable #f
+              #:max-wrap 20
+              #:max-indent-retain 40
+              #:wrap-indicator "↪"
+              #:wrap-at-text-width #f)
 ```
-event: Event?
-### **key-event-down?**
 
-Check whether the given event is the key: down
+The options are as follows:
+
+* #:enable:
+  Soft wrap lines that exceed viewport width. Default to off
+* #:max-wrap:
+  Maximum space left free at the end of the line.
+  This space is used to wrap text at word boundaries. If that is not possible within this limit
+  the word is simply split at the end of the line.
+
+  This is automatically hard-limited to a quarter of the viewport to ensure correct display on small views.
+
+  Default to 20
+* #:max-indent-retain
+  Maximum number of indentation that can be carried over from the previous line when softwrapping.
+  If a line is indented further then this limit it is rendered at the start of the viewport instead.
+
+  This is automatically hard-limited to a quarter of the viewport to ensure correct display on small views.
+
+  Default to 40
+* #:wrap-indicator
+  Indicator placed at the beginning of softwrapped lines
+
+  Defaults to ↪
+* #:wrap-at-text-width
+  Softwrap at `text_width` instead of viewport width if it is shorter
+
+# Examples
+```scheme
+(soft-wrap-kw #:sw-enable #t)
+```
+### **soft-wrap**
+Sets the configuration for soft wrap using var args.
 
 ```scheme
-(key-event-down? event)
+(soft-wrap . args)
 ```
-event: Event?
-### **key-event-home?**
 
-Check whether the given event is the key: home
+The args are expected to be something of the value:
+```scheme
+(-> SoftWrapConfiguration? bool?)
+```
+The options are as follows:
+
+* sw-enable:
+  Soft wrap lines that exceed viewport width. Default to off
+* sw-max-wrap:
+  Maximum space left free at the end of the line.
+  This space is used to wrap text at word boundaries. If that is not possible within this limit
+  the word is simply split at the end of the line.
+
+  This is automatically hard-limited to a quarter of the viewport to ensure correct display on small views.
+
+  Default to 20
+* sw-max-indent-retain
+  Maximum number of indentation that can be carried over from the previous line when softwrapping.
+  If a line is indented further then this limit it is rendered at the start of the viewport instead.
+
+  This is automatically hard-limited to a quarter of the viewport to ensure correct display on small views.
+
+  Default to 40
+* sw-wrap-indicator
+  Indicator placed at the beginning of softwrapped lines
+
+  Defaults to ↪
+* sw-wrap-at-text-width
+  Softwrap at `text_width` instead of viewport width if it is shorter
+
+# Examples
+```scheme
+(soft-wrap (sw-enable #t))
+```
+### **whitespace**
+Sets the configuration for whitespace using var args.
 
 ```scheme
-(key-event-home? event)
+(whitespace . args)
 ```
-event: Event?
-### **key-event-end?**
 
-Check whether the given event is the key: end
+The args are expected to be something of the value:
+```scheme
+(-> WhitespaceConfiguration? bool?)
+```
+The options are as follows:
+
+* ws-visible:
+  Show all visible whitespace, defaults to false
+* ws-render:
+  manually disable or enable characters
+  render options (specified in hashmap):
+```scheme
+  (hash
+    'space #f
+    'nbsp #f
+    'nnbsp #f
+    'tab #f
+    'newline #f)
+```
+* ws-chars:
+  manually set visible whitespace characters with a hashmap
+  character options (specified in hashmap):
+```scheme
+  (hash
+    'space #\·
+    'nbsp #\⍽
+    'nnbsp #\␣
+    'tab #\→
+    'newline #\⏎
+    ; Tabs will look like "→···" (depending on tab width)
+    'tabpad #\·)
+```
+# Examples
+```scheme
+(whitespace (ws-visible #t) (ws-chars (hash 'space #\·)) (ws-render (hash 'tab #f)))
+```
+### **indent-guides**
+Sets the configuration for indent-guides using args
 
 ```scheme
-(key-event-end? event)
+(indent-guides . args)
 ```
-event: Event?
-### **key-event-page-up?**
 
-Check whether the given event is the key: page-up
+The args are expected to be something of the value:
+```scheme
+(-> IndentGuidesConfig? bool?)
+```
+The options are as follows:
+
+* ig-render:
+  Show indent guides, defaults to false
+* ig-character:
+  character used for indent guides, defaults to "╎"
+* ig-skip-levels:
+  amount of levels to skip, defaults to 1
+
+# Examples
+```scheme
+(indent-guides (ig-render #t) (ig-character #\|) (ig-skip-levels 1))
+```
+### **scrolloff**
+Padding to keep between the edge of the screen and the cursor when scrolling. Defaults to 5.
+### **scroll_lines**
+Number of lines to scroll at once. Defaults to 3
+### **mouse**
+Mouse support. Defaults to true.
+### **shell**
+Shell to use for shell commands. Defaults to ["cmd", "/C"] on Windows and ["sh", "-c"] otherwise.
+### **jump-label-alphabet**
+The characters that are used to generate two character jump labels.
+Characters at the start of the alphabet are used first. Defaults to "abcdefghijklmnopqrstuvwxyz"
+### **line-number**
+Line number mode. Defaults to 'absolute, set to 'relative for relative line numbers
+### **cursorline**
+Highlight the lines cursors are currently on. Defaults to false
+### **cursorcolumn**
+Highlight the columns cursors are currently on. Defaults to false
+### **middle-click-paste**
+Middle click paste support. Defaults to true
+### **auto-completion**
+Automatic auto-completion, automatically pop up without user trigger. Defaults to true.
+### **auto-format**
+Automatic formatting on save. Defaults to true
+### **auto-save**
+Automatic save on focus lost and/or after delay.
+Time delay in milliseconds since last edit after which auto save timer triggers.
+Time delay defaults to false with 3000ms delay. Focus lost defaults to false.
+### **auto-save-after-delay-enable**
+Enables auto save after delay. Default is false.
+### **text-width**
+Set a global text_width
+### **idle-timeout**
+Time in milliseconds since last keypress before idle timers trigger.
+Used for various UI timeouts. Defaults to 250ms.
+### **completion-timeout**
+Time in milliseconds after typing a word character before auto completions
+are shown, set to 5 for instant. Defaults to 250ms.
+### **preview-completion-insert**
+Whether to insert the completion suggestion on hover. Defaults to true.
+### **completion-trigger-len**
+Length to trigger completions
+### **completion-replace**
+Whether to instruct the LSP to replace the entire word when applying a
+completion or to only insert new text
+### **auto-info**
+Whether to display infoboxes. Defaults to true.
+### **true-color**
+Set to `true` to override automatic detection of terminal truecolor support in the event of a
+false negative. Defaults to `false`.
+### **insert-final-newline**
+Whether to automatically insert a trailing line-ending on write if missing. Defaults to `true`
+### **color-modes**
+Whether to color modes with different colors. Defaults to `false`.
+### **gutters**
+Gutter configuration
+### **undercurl**
+Set to `true` to override automatic detection of terminal undercurl support in the
+event of a false negative. Defaults to `false`.
+### **terminal**
+Terminal config
+### **rulers**
+Column numbers at which to draw the rulers. Defaults to `[]`, meaning no rulers
+### **bufferline**
+Persistently display open buffers along the top
+### **workspace-lsp-roots**
+Workspace specific lsp ceiling dirs
+### **default-line-ending**
+Which line ending to choose for new documents.
+Defaults to `native`. i.e. `crlf` on Windows, otherwise `lf`.
+### **smart-tab**
+Enables smart tab
+### **rainbow-brackets**
+Enables rainbow brackets
+### **set-keybindings!**
+Override the global keybindings with the provided keymap
+### **inline-diagnostics-cursor-line-enable**
+Inline diagnostics cursor line
+### **inline-diagnostics-other-lines-disable**
+Disable inline diagnostics for other lines
+### **inline-diagnostics-cursor-line-disable**
+Disable inline diagnostics for the cursor line
+### **inline-diagnostics-end-of-line-disable**
+Disable inline diagnostics for the end of the line
+### **inline-diagnostics-other-lines-enable**
+Inline diagnostics other lines
+### **inline-diagnostics-end-of-line-enable**
+Inline diagnostics end of line
+### **inline-diagnostics-min-diagnostics-width**
+Inline diagnostics min diagnostics width
+### **inline-diagnostics-prefix-len**
+Inline diagnostics prefix length
+### **inline-diagnostics-max-wrap**
+Inline diagnostics maximum wrap
+### **inline-diagnostics-max-diagnostics**
+Inline diagnostics max diagnostics
+### **get-language-config**
+Get the configuration for a specific language
+### **set-language-config!**
+Set the language configuration
+# /Users/dmy/.steel/cogs/helix/editor.scm
+### **register-hook**
+Register a hook to be called after the event kind fired. It is not possible
+to unregister a hook once it has been registered. Any values that are captured
+through the callback function for this hook are considered to be rooted,
+and will not be freed for the duration of the runtime.
 
 ```scheme
-(key-event-page-up? event)
-```
-event: Event?
-### **key-event-page-down?**
+(register-hook event-kind callback-fn)
 
-Check whether the given event is the key: page-down
+event-kind - symbol?
+callback-fn - function?
+```
+
+The valid events are as follows:
+* 'on-mode-switch
+* 'post-insert-char
+* 'post-command
+* 'document-focus-lost
+* 'selection-did-change
+* 'document-opened
+* 'document-saved
+* 'document-changed
+* 'document-closed
+
+Each of these expects a function with a slightly different signature to accept
+the event payload.
+
+## on-mode-switch
+
+Expects a function with one argument to accept the `OnModeSwitchEvent`.
+
+### Example:
+```scheme
+(register-hook 'on-mode-switch (lambda (switch-event) (log::info! (mode-switch-old switch-event))))
+```
+
+## post-insert-char
+
+Expects a function with one argument to accept the character (`char?`).
 
 ```scheme
-(key-event-page-down? event)
+(register-hook 'post-insert-char
+         (lambda (char) (log::info! char)))
 ```
-event: Event?
-### **key-event-tab?**
 
-Check whether the given event is the key: tab
+## post-command
+
+Post command expects a function with one argument to accept the name of the command that was called.
+Note, this does not provide the arguments for the command, just the name of the command.
 
 ```scheme
-(key-event-tab? event)
+(register-hook 'post-command
+               (lambda (command-name) (log::info! command-name)))
 ```
-event: Event?
-### **key-event-delete?**
 
-Check whether the given event is the key: delete
+## document-focus-lost
+
+Expects a function with one argument to accept the doc id of the document that has lost focus.
+
+## selection-did-change
+
+Expects a function with one argument to accept the view id.
+
+## document-opened
+
+Expects a function with one argument to accept the doc id of the document that was just opened.
+
+## document-saved
+
+Expects a function with one argument to accept the doc id of the document that was just saved.
+## document-changed
+
+Expects a function with two arguments to accept the doc id of the docuoment that was just saved and the old text of the document before the change.
+## document-closed
+
+Expects a function with one argument to accept the `OnDocClosedEvent`
+### Example:
+```scheme
+(register-hook 'document-closed (lambda (closed-event) (log::info! (doc-closed-id closed-event))))
+### **editor-focus**
+
+Get the current focus of the editor, as a `ViewId`.
 
 ```scheme
-(key-event-delete? event)
+(editor-focus) -> ViewId
 ```
-event: Event?
-### **key-event-insert?**
 
-Check whether the given event is the key: insert
+### **editor-mode**
+
+Get the current mode of the editor
 
 ```scheme
-(key-event-insert? event)
+(editor-mode) -> Mode?
 ```
-event: Event?
-### **key-event-null?**
 
-Check whether the given event is the key: null
+### **cx->themes**
+DEPRECATED: Please use `themes->list`
+### **editor-count**
+Get the count
+### **themes->list**
+
+Get the current themes as a list of strings.
 
 ```scheme
-(key-event-null? event)
+(themes->list) -> (listof string?)
 ```
-event: Event?
-### **key-event-caps-lock?**
 
-Check whether the given event is the key: caps-lock
+### **editor-all-documents**
+
+Get a list of all of the document ids that are currently open.
 
 ```scheme
-(key-event-caps-lock? event)
+(editor-all-documents) -> (listof DocumentId?)
 ```
-event: Event?
-### **key-event-scroll-lock?**
 
-Check whether the given event is the key: scroll-lock
+### **cx->cursor**
+DEPRECATED: Please use `current-cursor`
+### **current-cursor**
+Gets the primary cursor position in screen coordinates,
+or `#false` if the primary cursor is not visible on screen.
 
 ```scheme
-(key-event-scroll-lock? event)
+(current-cursor) -> (listof? (or Position? #false) CursorKind)
 ```
-event: Event?
-### **key-event-num-lock?**
 
-Check whether the given event is the key: num-lock
+### **editor-focused-buffer-area**
+
+Get the `Rect` associated with the currently focused buffer.
 
 ```scheme
-(key-event-num-lock? event)
+(editor-focused-buffer-area) -> (or Rect? #false)
 ```
-event: Event?
-### **key-event-print-screen?**
 
-Check whether the given event is the key: print-screen
+### **selected-register!**
+Get currently selected register
+### **set-editor-count!**
+Sets the editor count.
+### **string->editor-mode**
+
+Create an editor mode from a string, or false if it string was not one of
+"normal", "insert", or "select"
 
 ```scheme
-(key-event-print-screen? event)
+(string->editor-mode "normal") -> (or Mode? #f)
 ```
-event: Event?
-### **key-event-pause?**
 
-Check whether the given event is the key: pause
-
-```scheme
-(key-event-pause? event)
-```
-event: Event?
-### **key-event-menu?**
-
-Check whether the given event is the key: menu
-
-```scheme
-(key-event-menu? event)
-```
-event: Event?
-### **key-event-keypad-begin?**
-
-Check whether the given event is the key: keypad-begin
-
-```scheme
-(key-event-keypad-begin? event)
-```
-event: Event?
+### **editor->doc-id**
+Get the document from a given view.
+### **editor-switch!**
+Open the document in a vertical split.
+### **editor-set-focus!**
+Set focus on the view.
+### **editor-set-mode!**
+Set the editor mode.
+### **editor-doc-in-view?**
+Check whether the current view contains a document.
+### **set-scratch-buffer-name!**
+Set the name of a scratch buffer.
+### **set-buffer-uri!**
+Set the URI of the buffer
+### **editor-doc-exists?**
+Check if a document exists.
+### **editor-document-last-saved**
+Check when a document was last saved (returns a `SystemTime`)
+### **editor-document->language**
+Get the language for the document
+### **editor-document-dirty?**
+Check if a document has unsaved changes
+### **editor-document-reload**
+Reload a document.
+### **editor->text**
+Get the document as a rope.
+### **editor-document->path**
+Get the path to a document.
+### **register->value**
+Get register value as a list of strings.
+### **set-editor-clip-top!**
+Set the editor clipping at the top.
+### **set-editor-clip-right!**
+Set the editor clipping at the right.
+### **set-editor-clip-left!**
+Set the editor clipping at the left.
+### **set-editor-clip-bottom!**
+Set the editor clipping at the bottom.
 # helix/core/text
 To use, you can include with `(require-builtin helix/core/text)`
 ### **Rope?**
@@ -3188,6 +3598,8 @@ Returns a new rope value.
 * end: (and positive? int?)
 ### **rope->string**
 Convert the given rope to a string
+### **rope-byte->char**
+Convert the byte offset into a character offset for a given rope
 ### **rope-byte->line**
 Convert the given byte offset to a line offset for a given rope
 
@@ -3200,7 +3612,7 @@ Convert the given byte offset to a line offset for a given rope
 
             
 ### **rope-char->byte**
-Convert the byte offset into a character offset for a given rope
+Convert the character offset into a byte offset for a given rope
 ### **rope-char->line**
 Convert the given character offset to a line offset for a given rope
 
