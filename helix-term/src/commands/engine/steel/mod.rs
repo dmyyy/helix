@@ -3645,14 +3645,11 @@ fn load_treesitter_api(engine: &mut Engine, generate_sources: bool) {
              lower: u32,
              upper: u32|
              -> Option<Vec<TreeSitterTree>> {
-                let Some(syn) = cx
+                let syn = cx
                     .editor
                     .documents
                     .get(&doc_id)
-                    .and_then(|d| d.syntax.as_ref())
-                else {
-                    return None;
-                };
+                    .and_then(|d| d.syntax.as_ref())?;
 
                 Some(TreeSitterSyntax::get_trees_byte_range(syn, lower, upper))
             },
@@ -3683,9 +3680,7 @@ fn load_treesitter_api(engine: &mut Engine, generate_sources: bool) {
              -> Option<Result<TreeSitterMatch, SteelErr>> {
                 let (text, syn) = {
                     let Some(doc) = cx.editor.documents.get(&doc_id) else {
-                        return Some(
-                            steelerr!(Generic => "unable to find doc, id: {}", doc_id).into(),
-                        );
+                        return Some(steelerr!(Generic => "unable to find doc, id: {}", doc_id));
                     };
                     let text = doc.text().slice(..);
                     let Some(syn) = doc.syntax() else {
@@ -3718,9 +3713,7 @@ fn load_treesitter_api(engine: &mut Engine, generate_sources: bool) {
              -> Option<Result<TreeSitterMatch, SteelErr>> {
                 let (text, syn) = {
                     let Some(doc) = cx.editor.documents.get(&doc_id) else {
-                        return Some(
-                            steelerr!(Generic => "unable to find doc, id: {}", doc_id).into(),
-                        );
+                        return Some(steelerr!(Generic => "unable to find doc, id: {}", doc_id));
                     };
                     let text = doc.text().slice(..);
                     let Some(syn) = doc.syntax() else {
@@ -3764,10 +3757,10 @@ fn load_treesitter_api(engine: &mut Engine, generate_sources: bool) {
          -> Result<TreeSitterQuery, SteelErr> {
             let loader = config.language_configuration.load();
             let Some(lang) = loader.language_for_name(language.to_string()) else {
-                return steelerr!(Generic => "unable to find language: {}", language).into();
+                return steelerr!(Generic => "unable to find language: {}", language);
             };
             let Some(config) = loader.get_config(lang) else {
-                return steelerr!(Generic => "unable to find language: {}", language).into();
+                return steelerr!(Generic => "unable to find language: {}", language);
             };
             TreeSitterQuery::new(config.grammar, source.as_str())
         },
@@ -3825,14 +3818,14 @@ fn load_treesitter_api(engine: &mut Engine, generate_sources: bool) {
              -> Result<TreeSitterSyntax, SteelErr> {
                 let loader = config.language_configuration.load();
                 let Some(lang) = loader.language_for_name(language.as_str()) else {
-                    return steelerr!(Generic => "unable to find language: {}", language).into();
+                    return steelerr!(Generic => "unable to find language: {}", language);
                 };
                 TreeSitterSyntax::new(source, lang, loader.as_ref())
             },
         );
 
     if generate_sources {
-        generate_module("treesitter.scm", &builtin_treesitter_module);
+        generate_module("treesitter.scm", builtin_treesitter_module);
         configure_lsp_builtins("treesitter", &module);
     }
     engine.register_steel_module(
@@ -3921,7 +3914,7 @@ pub fn generate_cog_file() {
 pub fn load_ext_api(engine: &mut Engine, generate_sources: bool) {
     let ext_api = include_str!("ext.scm");
     if generate_sources {
-        generate_module("ext.scm", &ext_api);
+        generate_module("ext.scm", ext_api);
     }
     engine.register_steel_module("helix/ext.scm".to_string(), ext_api.to_string());
 }
