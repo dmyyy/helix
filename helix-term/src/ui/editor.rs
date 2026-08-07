@@ -1736,8 +1736,7 @@ impl Component for EditorView {
 
     fn cursor(&self, _area: Rect, editor: &Editor) -> (Option<Position>, CursorKind) {
         match editor.cursor() {
-            // block cursors are also drawn manually, but keep the terminal
-            // cursor visible so terminals can still track it for effects
+            // keep hardware cursor visible for terminal shader effects
             (pos, CursorKind::Block) => {
                 if self.terminal_focused {
                     (pos, CursorKind::Block)
