@@ -1,6 +1,6 @@
 use std::cmp::min;
 
-use helix_core::doc_formatter::{DocumentFormatter, GraphemeSource, TextFormat};
+use helix_core::doc_formatter::{DocumentFormatter, FormattedGrapheme, GraphemeSource, TextFormat};
 use helix_core::graphemes::Grapheme;
 use helix_core::str_utils::char_to_byte_idx;
 use helix_core::syntax::{self, HighlightEvent, Highlighter, OverlayHighlights};
@@ -27,6 +27,30 @@ pub struct LinePos {
     pub visual_line: u16,
 }
 
+impl LinePos {
+    /// Returns the "no previous line yet" sentinel used by the render loop
+    /// before any grapheme has been emitted. `doc_line` uses `usize::MAX`
+    /// because no real document can reach that size (allocations are bounded
+    /// by `isize::MAX`); `visual_line` mirrors that with `u16::MAX` so any
+    /// addition into it is detectable as overflow rather than landing at a
+    /// plausible row.
+    pub const fn sentinel() -> Self {
+        Self {
+            first_visual_line: false,
+            doc_line: usize::MAX,
+            visual_line: u16::MAX,
+        }
+    }
+
+    /// True when `self` is still the [`LinePos::sentinel`] value, meaning
+    /// no real visual line has been processed yet. Decorations that read
+    /// `visual_line` (`draw_indent_guides`, `render_virtual_lines`) must
+    /// not run for a sentinel, since `u16::MAX + anything` overflows.
+    pub const fn is_sentinel(&self) -> bool {
+        self.doc_line == usize::MAX
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn render_document(
     surface: &mut Surface,
@@ -46,6 +70,7 @@ pub fn render_document(
         Position::new(offset.vertical_offset, offset.horizontal_offset),
         viewport,
     );
+
     render_text(
         &mut renderer,
         doc.text().slice(..),
@@ -81,11 +106,7 @@ pub fn render_text(
         SyntaxHighlighter::new(syntax_highlighter, text, theme, renderer.text_style);
     let mut overlay_highlighter = OverlayHighlighter::new(overlay_highlights, theme);
 
-    let mut last_line_pos = LinePos {
-        first_visual_line: false,
-        doc_line: usize::MAX,
-        visual_line: u16::MAX,
-    };
+    let mut last_line_pos = LinePos::sentinel();
     let mut last_line_end = 0;
     let mut is_in_indent_area = true;
     let mut last_line_indent_level = 0;
@@ -113,11 +134,7 @@ pub fn render_text(
 
         // apply decorations before rendering a new line
         if grapheme.visual_pos.row as u16 != last_line_pos.visual_line {
-            // we initiate doc_line with usize::MAX because no file
-            // can reach that size (memory allocations are limited to isize::MAX)
-            // initially there is no "previous" line (so doc_line is set to usize::MAX)
-            // in that case we don't need to draw indent guides/virtual text
-            if last_line_pos.doc_line != usize::MAX {
+            if !last_line_pos.is_sentinel() {
                 // draw indent guides for the last line
                 renderer.draw_indent_guides(last_line_indent_level, last_line_pos.visual_line);
                 is_in_indent_area = true;
@@ -158,7 +175,7 @@ pub fn render_text(
 
         let virt = grapheme.is_virtual();
         let grapheme_width = renderer.draw_grapheme(
-            grapheme.raw,
+            &grapheme,
             grapheme_style,
             virt,
             &mut last_line_indent_level,
@@ -168,8 +185,10 @@ pub fn render_text(
         last_line_end = grapheme.visual_pos.col + grapheme_width;
     }
 
-    renderer.draw_indent_guides(last_line_indent_level, last_line_pos.visual_line);
-    decorations.render_virtual_lines(renderer, last_line_pos, last_line_end)
+    if !last_line_pos.is_sentinel() {
+        renderer.draw_indent_guides(last_line_indent_level, last_line_pos.visual_line);
+        decorations.render_virtual_lines(renderer, last_line_pos, last_line_end)
+    }
 }
 
 #[derive(Debug)]
@@ -258,7 +277,7 @@ impl<'a> TextRenderer<'a> {
             whitespace_style: theme.get("ui.virtual.whitespace"),
             indent_width,
             starting_indent: offset.col / indent_width as usize
-                + (offset.col % indent_width as usize != 0) as usize
+                + !offset.col.is_multiple_of(indent_width as usize) as usize
                 + editor_config.indent_guides.skip_levels as usize,
             indent_guide_style: text_style.patch(
                 theme
@@ -313,7 +332,7 @@ impl<'a> TextRenderer<'a> {
     /// Draws a single `grapheme` at the current render position with a specified `style`.
     pub fn draw_grapheme(
         &mut self,
-        grapheme: Grapheme,
+        grapheme: &FormattedGrapheme,
         grapheme_style: GraphemeStyle,
         is_virtual: bool,
         last_indent_level: &mut usize,
@@ -335,6 +354,7 @@ impl<'a> TextRenderer<'a> {
         style = style.patch(grapheme_style.overlay_style);
 
         let width = grapheme.width();
+        let mut is_tab = false;
         let space = if is_virtual { " " } else { &self.space };
         let nbsp = if is_virtual { " " } else { &self.nbsp };
         let nnbsp = if is_virtual { " " } else { &self.nnbsp };
@@ -343,13 +363,14 @@ impl<'a> TextRenderer<'a> {
         } else {
             &self.tab
         };
-        let grapheme = match grapheme {
+        let grapheme = match grapheme.raw {
             Grapheme::Tab { width } => {
+                is_tab = true;
                 let grapheme_tab_width = char_to_byte_idx(tab, width);
                 &tab[..grapheme_tab_width]
             }
             // TODO special rendering for other whitespaces?
-            Grapheme::Other { ref g } if g == " " => space,
+            Grapheme::Other { ref g } if g == " " && !grapheme.source.is_eof() => space,
             Grapheme::Other { ref g } if g == "\u{00A0}" => nbsp,
             Grapheme::Other { ref g } if g == "\u{202F}" => nnbsp,
             Grapheme::Other { ref g } => g,
@@ -359,12 +380,18 @@ impl<'a> TextRenderer<'a> {
         let in_bounds = self.column_in_bounds(position.col, width);
 
         if in_bounds {
-            self.surface.set_string(
-                self.viewport.x + (position.col - self.offset.col) as u16,
-                self.viewport.y + position.row as u16,
-                grapheme,
-                style,
-            );
+            let x = self.viewport.x + (position.col - self.offset.col) as u16;
+            let y = self.viewport.y + position.row as u16;
+            if is_tab {
+                // A tab expands to `width` single-column cells; writing them
+                // individually keeps background styles (selection, cursorline)
+                // across the whole tab and avoids the redraw diff clipping
+                // `render-whitespace` pads. A single `set_grapheme` would pack
+                // them into one wide cell and leave the rest unstyled.
+                self.surface.set_tab(x, y, grapheme, style);
+            } else {
+                self.surface.set_grapheme(x, y, grapheme, width, style);
+            }
         } else if cut_off_start != 0 && cut_off_start < width {
             // partially on screen
             let rect = Rect::new(
@@ -414,7 +441,7 @@ impl<'a> TextRenderer<'a> {
         }
     }
 
-    pub fn set_string(&mut self, x: u16, y: u16, string: impl AsRef<str>, style: Style) {
+    pub fn set_string(&mut self, x: u16, y: u16, string: &str, style: Style) {
         if (y as usize) < self.offset.row {
             return;
         }
@@ -422,14 +449,7 @@ impl<'a> TextRenderer<'a> {
             .set_string(x, y + self.viewport.y, string, style)
     }
 
-    pub fn set_stringn(
-        &mut self,
-        x: u16,
-        y: u16,
-        string: impl AsRef<str>,
-        width: usize,
-        style: Style,
-    ) {
+    pub fn set_stringn(&mut self, x: u16, y: u16, string: &str, width: usize, style: Style) {
         if (y as usize) < self.offset.row {
             return;
         }
@@ -570,5 +590,42 @@ impl<'t> OverlayHighlighter<'t> {
             acc.patch(self.theme.highlight(highlight))
         });
         self.update_pos();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn line_pos_sentinel_constructor_matches_is_sentinel() {
+        let pos = LinePos::sentinel();
+        assert!(pos.is_sentinel());
+        assert_eq!(pos.doc_line, usize::MAX);
+        assert_eq!(pos.visual_line, u16::MAX);
+    }
+
+    #[test]
+    fn line_pos_with_real_doc_line_is_not_sentinel() {
+        let pos = LinePos {
+            first_visual_line: true,
+            doc_line: 0,
+            visual_line: 0,
+        };
+        assert!(!pos.is_sentinel());
+    }
+
+    #[test]
+    fn line_pos_at_max_visual_line_with_real_doc_line_is_not_sentinel() {
+        // Only `doc_line` decides sentinel-ness. A real line that happens
+        // to land at `visual_line = u16::MAX` (the renderer's saturation
+        // ceiling) is still a real line: trailing decorations should run
+        // for it. The sentinel guard hinges on `doc_line` alone.
+        let pos = LinePos {
+            first_visual_line: false,
+            doc_line: 42,
+            visual_line: u16::MAX,
+        };
+        assert!(!pos.is_sentinel());
     }
 }

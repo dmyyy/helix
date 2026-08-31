@@ -1,7 +1,8 @@
 use arc_swap::{access::Map, ArcSwap};
 use futures_util::Stream;
-use helix_core::{diagnostic::Severity, pos_at_coords, syntax, Range, Selection};
+use helix_core::{diagnostic::Severity, pos_at_coords, syntax, Position, Range, Selection};
 use helix_lsp::{
+    jsonrpc,
     lsp::{self, notification::Notification},
     util::lsp_range_to_range,
     LanguageServerId, LspProgressMap,
@@ -21,6 +22,7 @@ use tui::backend::Backend;
 
 use crate::{
     args::Args,
+    commands::ScriptingEngine,
     compositor::{Compositor, Event},
     config::Config,
     handlers,
@@ -54,11 +56,11 @@ use tui::backend::CrosstermBackend;
 use tui::backend::TestBackend;
 
 #[cfg(all(not(windows), not(feature = "integration")))]
-type TerminalBackend = TerminaBackend;
+pub type TerminalBackend = TerminaBackend;
 #[cfg(all(windows, not(feature = "integration")))]
-type TerminalBackend = CrosstermBackend<std::io::Stdout>;
+pub type TerminalBackend = CrosstermBackend<std::io::Stdout>;
 #[cfg(feature = "integration")]
-type TerminalBackend = TestBackend;
+pub type TerminalBackend = TestBackend;
 
 #[cfg(not(windows))]
 type TerminalEvent = termina::Event;
@@ -81,30 +83,43 @@ pub struct Application {
     theme_mode: Option<theme::Mode>,
 }
 
+fn apply_diff_positions(
+    editor: &mut Editor,
+    view_id: helix_view::ViewId,
+    doc_id: helix_view::DocumentId,
+    positions: &[Position],
+) {
+    if positions.is_empty() {
+        return;
+    }
+    let doc = doc_mut!(editor, &doc_id);
+    let selection = positions
+        .iter()
+        .map(|coords| Range::point(pos_at_coords(doc.text().slice(..), *coords, true)))
+        .collect();
+    doc.set_selection(view_id, selection);
+    if editor.tree.focus == view_id {
+        let (view, doc) = current!(editor);
+        align_view(doc, view, Align::Center);
+    }
+}
+
 #[cfg(feature = "integration")]
 fn setup_integration_logging() {
     let level = std::env::var("HELIX_LOG_LEVEL")
         .map(|lvl| lvl.parse().unwrap())
         .unwrap_or(log::LevelFilter::Info);
 
-    // Separate file config so we can include year, month and day in file logs
-    let _ = fern::Dispatch::new()
-        .format(|out, message, record| {
-            out.finish(format_args!(
-                "{} {} [{}] {}",
-                chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f"),
-                record.target(),
-                record.level(),
-                message
-            ))
-        })
-        .level(level)
-        .chain(std::io::stdout())
-        .apply();
+    crate::logging::init_stdout(level);
 }
 
 impl Application {
-    pub fn new(args: Args, config: Config, lang_loader: syntax::Loader) -> Result<Self, Error> {
+    pub fn new(
+        args: Args,
+        config: Config,
+        lang_loader: syntax::Loader,
+        workspace_trust: helix_loader::workspace_trust::WorkspaceTrust,
+    ) -> Result<Self, Error> {
         #[cfg(feature = "integration")]
         setup_integration_logging();
 
@@ -124,7 +139,7 @@ impl Application {
         let backend = TestBackend::new(120, 150);
 
         let theme_mode = backend.get_theme_mode();
-        let terminal = Terminal::new(backend)?;
+        let mut terminal = Terminal::new(backend)?;
         let area = terminal.size();
         let mut compositor = Compositor::new(area);
         let config = Arc::new(ArcSwap::from_pointee(config));
@@ -137,27 +152,77 @@ impl Application {
                 &config.editor
             })),
             handlers,
+            workspace_trust,
         );
-        Self::load_configured_theme(
-            &mut editor,
-            &config.load(),
-            terminal.backend().supports_true_color(),
-            theme_mode,
-        );
+        Self::load_configured_theme(&mut editor, &config.load(), &mut terminal, theme_mode);
 
         let keys = Box::new(Map::new(Arc::clone(&config), |config: &Config| {
             &config.keys
         }));
         let editor_view = Box::new(ui::EditorView::new(Keymaps::new(keys)));
+
         compositor.push(editor_view);
 
-        let jobs = Jobs::new();
+        let mut jobs = Jobs::new();
+        {
+            let syn_loader = editor.syn_loader.clone();
+
+            let mut cx = crate::commands::Context {
+                register: None,
+                count: std::num::NonZeroUsize::new(1),
+                editor: &mut editor,
+                callback: Vec::new(),
+                on_next_key_callback: None,
+                jobs: &mut jobs,
+            };
+
+            crate::commands::ScriptingEngine::run_initialization_script(
+                &mut cx,
+                config.clone(),
+                syn_loader,
+                crate::commands::engine::TerminalEventReaderHandle::new(terminal.backend()),
+            );
+        }
 
         if args.load_tutor {
             let path = helix_loader::runtime_file(Path::new("tutor"));
             editor.open(&path, Action::VerticalSplit)?;
             // Unset path to prevent accidentally saving to the original tutor file.
             doc_mut!(editor).set_path(None);
+        } else if args.diff {
+            // Filter out directory paths so `hx . --diff a b` works as expected.
+            let files: Vec<_> = args
+                .files
+                .into_iter()
+                .filter(|(p, _)| !p.is_dir())
+                .collect();
+            if files.len() != 2 {
+                anyhow::bail!("--diff requires exactly two file paths");
+            }
+            let (path_a, pos_a) = &files[0];
+            let (path_b, pos_b) = &files[1];
+
+            let doc_a = editor.open(path_a, Action::VerticalSplit)?;
+            let view_a = editor.tree.focus;
+            apply_diff_positions(&mut editor, view_a, doc_a, pos_a);
+
+            let doc_b = editor.open(path_b, Action::VerticalSplit)?;
+            let view_b = editor.tree.focus;
+            apply_diff_positions(&mut editor, view_b, doc_b, pos_b);
+
+            let rope_a = editor.documents[&doc_a].text().clone();
+            let rope_b = editor.documents[&doc_b].text().clone();
+
+            let mut session =
+                helix_view::diff_session::DiffSession::new(view_a, view_b, doc_a, doc_b);
+            session.compute_hunks(&rope_a, &rope_b);
+            editor.diff_sessions.push(session);
+
+            editor.set_status(format!(
+                "Diff: {} vs {}",
+                path_a.display(),
+                path_b.display()
+            ));
         } else if !args.files.is_empty() {
             let mut files_it = args.files.into_iter().peekable();
 
@@ -339,7 +404,9 @@ impl Application {
                     self.handle_terminal_events(event).await;
                 }
                 Some(callback) = self.jobs.callbacks.recv() => {
-                    self.jobs.handle_callback(&mut self.editor, &mut self.compositor, Ok(Some(callback)));
+                    if let Some(job) = self.jobs.handle_callback(&mut self.editor, &mut self.compositor, Ok(Some(callback))) {
+                        self.jobs.add(job);
+                    }
                     self.render().await;
                 }
                 Some(msg) = self.jobs.status_messages.recv() => {
@@ -354,7 +421,13 @@ impl Application {
                     helix_event::request_redraw();
                 }
                 Some(callback) = self.jobs.wait_futures.next() => {
-                    self.jobs.handle_callback(&mut self.editor, &mut self.compositor, callback);
+                    if let Some(job) = self.jobs.handle_callback(&mut self.editor, &mut self.compositor, callback) {
+                        self.jobs.add(job);
+                    }
+                    self.render().await;
+                }
+                Some(callback) = self.jobs.local_futures.next() => {
+                    self.jobs.handle_local_callback(&mut self.editor, &mut self.compositor, callback);
                     self.render().await;
                 }
                 event = self.editor.wait_event() => {
@@ -362,7 +435,11 @@ impl Application {
 
                     #[cfg(feature = "integration")]
                     {
-                        if _idle_handled {
+                        // Don't report idle while a save is still in flight, or an assertion on the post-save document state (e.g. its path,
+                        // set in `handle_document_write`) can run before the `DocumentSavedEvent` is processed. Slow file I/O on Windows
+                        // (atomic_save's rename/fsync dance over the still-open temp file) makes this race observable.
+                        // Errors produce an event too, so it cannot hang.
+                        if _idle_handled && self.editor.write_count == 0 {
                             return true;
                         }
                     }
@@ -395,6 +472,16 @@ impl Application {
                 };
                 self.config.store(Arc::new(app_config));
             }
+            ConfigEvent::Change => {}
+            ConfigEvent::ThemeChanged => {
+                let _ = self.terminal.backend_mut().set_background_color(
+                    self.editor
+                        .theme
+                        .try_get_exact("ui.background")
+                        .and_then(|style| style.bg),
+                );
+                return;
+            }
         }
 
         // Update all the relevant members in the editor after updating
@@ -414,15 +501,20 @@ impl Application {
             let default_config = Config::load_default()
                 .map_err(|err| anyhow::anyhow!("Failed to load config: {}", err))?;
 
+            // Apply any change to editor.workspace_trust before reading local language config.
+            self.editor
+                .workspace_trust
+                .set_config((&default_config.editor.workspace_trust).into());
+
             // Update the syntax language loader before setting the theme. Setting the theme will
             // call `Loader::set_scopes` which must be done before the documents are re-parsed for
             // the sake of locals highlighting.
-            let lang_loader = helix_core::config::user_lang_loader()?;
+            let lang_loader = helix_core::config::user_lang_loader(&self.editor.workspace_trust)?;
             self.editor.syn_loader.store(Arc::new(lang_loader));
             Self::load_configured_theme(
                 &mut self.editor,
                 &default_config,
-                self.terminal.backend().supports_true_color(),
+                &mut self.terminal,
                 self.theme_mode,
             );
 
@@ -443,6 +535,32 @@ impl Application {
             self.terminal.reconfigure((&default_config.editor).into())?;
             // Store new config
             self.config.store(Arc::new(default_config));
+
+            {
+                crate::commands::ScriptingEngine::reinitialize();
+
+                let syn_loader = self.editor.syn_loader.clone();
+                let config = self.config.clone();
+
+                let mut cx = crate::commands::Context {
+                    register: None,
+                    count: std::num::NonZeroUsize::new(1),
+                    editor: &mut self.editor,
+                    callback: Vec::new(),
+                    on_next_key_callback: None,
+                    jobs: &mut self.jobs,
+                };
+
+                crate::commands::ScriptingEngine::run_initialization_script(
+                    &mut cx,
+                    config.clone(),
+                    syn_loader,
+                    crate::commands::engine::TerminalEventReaderHandle::new(
+                        self.terminal.backend(),
+                    ),
+                );
+            }
+
             Ok(())
         };
 
@@ -460,10 +578,12 @@ impl Application {
     fn load_configured_theme(
         editor: &mut Editor,
         config: &Config,
-        terminal_true_color: bool,
+        terminal: &mut Terminal,
         mode: Option<theme::Mode>,
     ) {
-        let true_color = terminal_true_color || config.editor.true_color || crate::true_color();
+        let true_color = terminal.backend().supports_true_color()
+            || config.editor.true_color
+            || crate::true_color();
         let theme = config
             .theme
             .as_ref()
@@ -490,7 +610,7 @@ impl Application {
                     })
             })
             .unwrap_or_else(|| editor.theme_loader.default_theme(true_color));
-        editor.set_theme(theme);
+        let _ = editor.set_theme(theme);
     }
 
     #[cfg(windows)]
@@ -717,13 +837,21 @@ impl Application {
             }) => false,
             #[cfg(not(windows))]
             termina::Event::Csi(csi::Csi::Mode(csi::Mode::ReportTheme(mode))) => {
-                Self::load_configured_theme(
-                    &mut self.editor,
-                    &self.config.load(),
-                    self.terminal.backend().supports_true_color(),
-                    Some(mode.into()),
-                );
-                true
+                let config = self.config.load();
+                let mode = mode.into();
+                let mode_changed = self.theme_mode.as_ref().is_none_or(|m| m != &mode);
+                if mode_changed && config.theme.as_ref().is_some_and(|t| t.is_adaptive()) {
+                    self.theme_mode = Some(mode);
+                    Self::load_configured_theme(
+                        &mut self.editor,
+                        &config,
+                        &mut self.terminal,
+                        self.theme_mode,
+                    );
+                    true
+                } else {
+                    false
+                }
             }
             #[cfg(windows)]
             TerminalEvent::Resize(width, height) => {
@@ -744,6 +872,8 @@ impl Application {
                 kind: crossterm::event::KeyEventKind::Release,
                 ..
             }) => false,
+            #[cfg(not(windows))]
+            event if event.is_escape() => false,
             event => self.compositor.handle_event(&event.into(), &mut cx),
         };
 
@@ -829,15 +959,7 @@ impl Application {
                         );
                     }
                     Notification::ShowMessage(params) => {
-                        if self.config.load().editor.lsp.display_messages {
-                            match params.typ {
-                                lsp::MessageType::ERROR => self.editor.set_error(params.message),
-                                lsp::MessageType::WARNING => {
-                                    self.editor.set_warning(params.message)
-                                }
-                                _ => self.editor.set_status(params.message),
-                            }
-                        }
+                        self.handle_show_message(params.typ, params.message);
                     }
                     Notification::LogMessage(params) => {
                         log::info!("window/logMessage: {:?}", params);
@@ -951,6 +1073,21 @@ impl Application {
 
                         // Remove the language server from the registry.
                         self.editor.language_servers.remove_by_id(server_id);
+                    }
+                    Notification::Other(event_name, params) => {
+                        let mut cx = crate::compositor::Context {
+                            editor: &mut self.editor,
+                            scroll: None,
+                            jobs: &mut self.jobs,
+                        };
+
+                        ScriptingEngine::handle_lsp_call(
+                            &mut cx,
+                            server_id,
+                            event_name,
+                            jsonrpc::Id::Null,
+                            params,
+                        );
                     }
                 }
             }
@@ -1118,6 +1255,32 @@ impl Application {
                         let result = self.handle_show_document(params, offset_encoding);
                         Ok(json!(result))
                     }
+                    Ok(MethodCall::Other(event_name, params)) => {
+                        let mut cx = crate::compositor::Context {
+                            editor: &mut self.editor,
+                            scroll: None,
+                            jobs: &mut self.jobs,
+                        };
+
+                        let reply = ScriptingEngine::handle_lsp_call(
+                            &mut cx,
+                            server_id,
+                            event_name,
+                            id.clone(),
+                            params,
+                        );
+
+                        if let Some(reply) = reply {
+                            let language_server = language_server!();
+                            if let Err(err) = language_server.reply(id.clone(), reply) {
+                                log::error!(
+                                    "Failed to send reply to server '{}' request {id}: {err}",
+                                    language_server.name()
+                                );
+                            }
+                        };
+                        return;
+                    }
                     Ok(MethodCall::WorkspaceDiagnosticRefresh) => {
                         let language_server = language_server!().id();
 
@@ -1138,6 +1301,42 @@ impl Application {
 
                         Ok(serde_json::Value::Null)
                     }
+                    Ok(MethodCall::ShowMessageRequest(params)) => {
+                        if let Some(actions) = params.actions.filter(|a| !a.is_empty()) {
+                            let id = id.clone();
+                            let select = ui::Select::new(
+                                params.message,
+                                actions,
+                                (),
+                                move |editor, action, event| {
+                                    let reply = match event {
+                                        ui::PromptEvent::Update => return,
+                                        ui::PromptEvent::Validate => Some(action.clone()),
+                                        ui::PromptEvent::Abort => None,
+                                    };
+                                    if let Some(language_server) =
+                                        editor.language_server_by_id(server_id)
+                                    {
+                                        if let Err(err) =
+                                            language_server.reply(id.clone(), Ok(json!(reply)))
+                                        {
+                                            log::error!(
+                                                "Failed to send reply to server '{}' request {id}: {err}",
+                                                language_server.name()
+                                            );
+                                        }
+                                    }
+                                },
+                            );
+                            self.compositor
+                                .replace_or_push("lsp-show-message-request", select);
+                            // Avoid sending a reply. The `Select` callback above sends the reply.
+                            return;
+                        } else {
+                            self.handle_show_message(params.typ, params.message);
+                            Ok(serde_json::Value::Null)
+                        }
+                    }
                 };
 
                 let language_server = language_server!();
@@ -1148,7 +1347,18 @@ impl Application {
                     );
                 }
             }
+
             Call::Invalid { id } => log::error!("LSP invalid method call id={:?}", id),
+        }
+    }
+
+    fn handle_show_message(&mut self, message_type: lsp::MessageType, message: String) {
+        if self.config.load().editor.lsp.display_messages {
+            match message_type {
+                lsp::MessageType::ERROR => self.editor.set_error(message),
+                lsp::MessageType::WARNING => self.editor.set_warning(message),
+                _ => self.editor.set_status(message),
+            }
         }
     }
 
@@ -1184,9 +1394,17 @@ impl Application {
         // If `Uri` gets another variant other than `Path` this may not be valid.
         let path = uri.as_path().expect("URIs are valid paths");
 
-        let action = match take_focus {
-            Some(true) => helix_view::editor::Action::Replace,
-            _ => helix_view::editor::Action::VerticalSplit,
+        // Determine the focus strategy based on the current UI state and LSP request:
+        // 1. If there is no pop-up overlay, jump directly (Replace).
+        // 2. If there is a pop-up overlay, unless the LSP forces take_focus, only load in the background (Load) to prevent interruption of input.
+        // Note: We assume layer_count() == 1 means only the EditorView is present (no popups/overlays).
+        let action = if self.compositor.layer_count() == 1 {
+            helix_view::editor::Action::Replace
+        } else {
+            match take_focus {
+                Some(true) => helix_view::editor::Action::Replace,
+                _ => helix_view::editor::Action::Load,
+            }
         };
 
         let doc_id = match self.editor.open(path, action) {
@@ -1275,6 +1493,8 @@ impl Application {
 
         let close_errs = self.close().await;
 
+        ScriptingEngine::shutdown();
+
         self.restore_term()?;
 
         for err in close_errs {
@@ -1305,13 +1525,15 @@ impl Application {
             errs.push(err);
         }
 
-        if self.editor.close_language_servers(None).await.is_err() {
-            log::error!("Timed out waiting for language servers to shutdown");
-            errs.push(anyhow::format_err!(
-                "Timed out waiting for language servers to shutdown"
-            ));
-        }
+        self.editor.close_language_servers(None).await;
 
         errs
+    }
+}
+
+impl ui::menu::Item for lsp::MessageActionItem {
+    type Data = ();
+    fn format(&self, _data: &Self::Data) -> tui::widgets::Row<'_> {
+        self.title.as_str().into()
     }
 }

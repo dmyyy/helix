@@ -1,8 +1,10 @@
 #[macro_use]
 pub mod macros;
 
+pub mod action;
 pub mod annotations;
 pub mod clipboard;
+pub mod diff_session;
 pub mod document;
 pub mod editor;
 pub mod events;
@@ -18,6 +20,8 @@ pub mod theme;
 pub mod tree;
 pub mod view;
 
+pub mod extension;
+
 use std::num::NonZeroUsize;
 
 // uses NonZeroUsize so Option<DocumentId> use a byte rather than two
@@ -27,6 +31,15 @@ pub struct DocumentId(NonZeroUsize);
 impl Default for DocumentId {
     fn default() -> DocumentId {
         DocumentId(NonZeroUsize::new(1).unwrap())
+    }
+}
+
+#[cfg(test)]
+impl DocumentId {
+    /// Constructs a `DocumentId` with the given non-zero id, for use in tests
+    /// that need several distinct ids without spinning up an `Editor`.
+    pub(crate) fn new(id: usize) -> DocumentId {
+        DocumentId(NonZeroUsize::new(id).expect("document id must be non-zero"))
     }
 }
 

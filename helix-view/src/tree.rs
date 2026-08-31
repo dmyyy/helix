@@ -669,6 +669,13 @@ impl Tree {
     pub fn area(&self) -> Rect {
         self.area
     }
+
+    pub fn view_id_area(&self, id: ViewId) -> Option<Rect> {
+        self.nodes.get(id).map(|node| match &node.content {
+            Content::View(v) => v.area,
+            Content::Container(c) => c.area,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -957,8 +964,7 @@ mod test {
 
         assert_eq!(10, tree.views().count());
         assert_eq!(
-            std::iter::repeat(7)
-                .take(9)
+            std::iter::repeat_n(7, 9)
                 .chain(Some(8)) // Rounding in `recalculate`.
                 .collect::<Vec<_>>(),
             tree.views()

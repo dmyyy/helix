@@ -51,63 +51,47 @@ impl From<termina::escape::csi::ThemeMode> for Mode {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Config {
-    light: String,
-    dark: String,
-    /// A theme to choose when the terminal did not declare either light or dark mode.
-    /// When not specified the dark theme is preferred.
-    fallback: Option<String>,
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged, deny_unknown_fields, rename_all = "kebab-case")]
+pub enum Config {
+    Constant(String),
+    Adaptive {
+        light: String,
+        dark: String,
+        /// A theme to choose when the terminal did not declare either light or dark mode.
+        /// When not specified the dark theme is preferred.
+        fallback: Option<String>,
+    },
 }
 
 impl Config {
     pub fn choose(&self, preference: Option<Mode>) -> &str {
-        match preference {
-            Some(Mode::Light) => &self.light,
-            Some(Mode::Dark) => &self.dark,
-            None => self.fallback.as_ref().unwrap_or(&self.dark),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for Config {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged, deny_unknown_fields, rename_all = "kebab-case")]
-        enum InnerConfig {
-            Constant(String),
-            Adaptive {
-                dark: String,
-                light: String,
-                fallback: Option<String>,
-            },
-        }
-
-        let inner = InnerConfig::deserialize(deserializer)?;
-
-        let (light, dark, fallback) = match inner {
-            InnerConfig::Constant(theme) => (theme.clone(), theme.clone(), None),
-            InnerConfig::Adaptive {
+        match self {
+            Config::Constant(theme) => theme,
+            Config::Adaptive {
                 light,
                 dark,
                 fallback,
-            } => (light, dark, fallback),
-        };
+            } => match preference {
+                Some(Mode::Light) => light,
+                Some(Mode::Dark) => dark,
+                None => fallback.as_ref().unwrap_or(dark),
+            },
+        }
+    }
 
-        Ok(Self {
-            light,
-            dark,
-            fallback,
-        })
+    pub fn is_adaptive(&self) -> bool {
+        matches!(self, Self::Adaptive { .. })
     }
 }
+
 #[derive(Clone, Debug)]
 pub struct Loader {
     /// Theme directories to search from highest to lowest priority
     theme_dirs: Vec<PathBuf>,
+
+    /// Themes which are dynamically created at runtime
+    dynamic_themes: HashMap<String, Theme>,
 }
 impl Loader {
     /// Creates a new loader that can load themes from multiple directories.
@@ -117,18 +101,34 @@ impl Loader {
     pub fn new(dirs: &[PathBuf]) -> Self {
         Self {
             theme_dirs: dirs.iter().map(|p| p.join("themes")).collect(),
+            dynamic_themes: HashMap::new(),
         }
+    }
+
+    pub fn dynamic_themes(&self) -> impl Iterator<Item = &String> {
+        self.dynamic_themes.keys()
     }
 
     /// Loads a theme searching directories in priority order.
     pub fn load(&self, name: &str) -> Result<Theme> {
-        let (theme, warnings) = self.load_with_warnings(name)?;
+        match self.load_with_warnings(name) {
+            Ok((theme, warnings)) => {
+                for warning in warnings {
+                    warn!("Theme '{}': {}", name, warning);
+                }
 
-        for warning in warnings {
-            warn!("Theme '{}': {}", name, warning);
+                Ok(theme)
+            }
+            Err(_) => self
+                .dynamic_themes
+                .get(name)
+                .ok_or_else(|| anyhow::anyhow!("Could not load theme: {}", name))
+                .cloned(),
         }
+    }
 
-        Ok(theme)
+    pub fn add_dynamic_theme(&mut self, name: String, theme: Theme) {
+        self.dynamic_themes.insert(name, theme);
     }
 
     /// Loads a theme searching directories in priority order, returning any warnings
@@ -296,6 +296,9 @@ pub struct Theme {
     // tree-sitter highlight styles are stored in a Vec to optimize lookups
     scopes: Vec<String>,
     highlights: Vec<Style>,
+    /// Reverse map from scope string to its `Highlight` index. `find_highlight_exact`
+    /// is called many times per frame, so we optimize lookups.
+    scope_index: HashMap<String, Highlight>,
     rainbow_length: usize,
 }
 
@@ -439,8 +442,25 @@ impl Theme {
         &self.name
     }
 
+    pub fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+
     pub fn get(&self, scope: &str) -> Style {
         self.try_get(scope).unwrap_or_default()
+    }
+
+    pub fn set(&mut self, scope: String, style: Style) {
+        if self.styles.insert(scope.to_string(), style).is_some() {
+            for (name, highlights) in self.scopes.iter().zip(self.highlights.iter_mut()) {
+                if *name == scope {
+                    *highlights = style;
+                }
+            }
+        } else {
+            self.scopes.push(scope);
+            self.highlights.push(style);
+        }
     }
 
     /// Get the style of a scope, falling back to dot separated broader
@@ -464,10 +484,7 @@ impl Theme {
     }
 
     pub fn find_highlight_exact(&self, scope: &str) -> Option<Highlight> {
-        self.scopes()
-            .iter()
-            .position(|s| s == scope)
-            .map(|idx| Highlight::new(idx as u32))
+        self.scope_index.get(scope).copied()
     }
 
     pub fn find_highlight(&self, mut scope: &str) -> Option<Highlight> {
@@ -495,7 +512,7 @@ impl Theme {
         self.rainbow_length
     }
 
-    fn from_toml(value: Value) -> (Self, Vec<String>) {
+    pub fn from_toml(value: Value) -> (Self, Vec<String>) {
         if let Value::Table(table) = value {
             Theme::from_keys(table)
         } else {
@@ -508,10 +525,17 @@ impl Theme {
         let (styles, scopes, highlights, rainbow_length, load_errors) =
             build_theme_values(toml_keys);
 
+        let scope_index = scopes
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.clone(), Highlight::new(i as u32)))
+            .collect();
+
         let theme = Self {
             styles,
             scopes,
             highlights,
+            scope_index,
             rainbow_length,
             ..Default::default()
         };
@@ -519,7 +543,7 @@ impl Theme {
     }
 }
 
-struct ThemePalette {
+pub struct ThemePalette {
     palette: HashMap<String, Color>,
 }
 
@@ -561,7 +585,7 @@ impl ThemePalette {
 
     pub fn string_to_rgb(s: &str) -> Result<Color, String> {
         if s.starts_with('#') {
-            Self::hex_string_to_rgb(s)
+            Color::from_hex(s).map_err(|e| format!("{e}: {s}"))
         } else {
             Self::ansi_string_to_rgb(s)
         }
@@ -572,20 +596,6 @@ impl ThemePalette {
             return Ok(Color::Indexed(index));
         }
         Err(format!("Malformed ANSI: {}", s))
-    }
-
-    fn hex_string_to_rgb(s: &str) -> Result<Color, String> {
-        if s.len() >= 7 {
-            if let (Ok(red), Ok(green), Ok(blue)) = (
-                u8::from_str_radix(&s[1..3], 16),
-                u8::from_str_radix(&s[3..5], 16),
-                u8::from_str_radix(&s[5..7], 16),
-            ) {
-                return Ok(Color::Rgb(red, green, blue));
-            }
-        }
-
-        Err(format!("Malformed hexcode: {}", s))
     }
 
     fn parse_value_as_str(value: &Value) -> Result<&str, String> {
@@ -788,5 +798,38 @@ mod tests {
     fn out_of_bounds() {
         let highlight = Highlight::new(Theme::rgb_highlight(0, 0, 0).get() - 1);
         Theme::default().highlight(highlight);
+    }
+
+    #[test]
+    fn default_theme_defines_diff_view_scopes() {
+        // The diff viewer pulls its line backgrounds from the `.view` namespace.
+        // Each key must resolve via try_get_exact (no rsplit cascade) so the
+        // diff viewer never silently picks up a bare `diff.*` style intended
+        // for the VCS gutter or the diff language grammar.
+        let theme = DEFAULT_THEME.clone();
+        for key in [
+            "diff.plus.view",
+            "diff.minus.view",
+            "diff.delta.view",
+            "diff.delta.view.text",
+        ] {
+            assert!(
+                theme.try_get_exact(key).is_some(),
+                "default theme is missing required diff viewer scope `{key}`",
+            );
+        }
+    }
+
+    #[test]
+    fn default_theme_keeps_legacy_diff_scopes() {
+        // The bare scopes back the VCS gutter and the diff language grammar.
+        // They MUST stay defined so existing consumers keep working.
+        let theme = DEFAULT_THEME.clone();
+        for key in ["diff.plus", "diff.minus", "diff.delta"] {
+            assert!(
+                theme.try_get_exact(key).is_some(),
+                "default theme dropped legacy diff scope `{key}`",
+            );
+        }
     }
 }

@@ -1,7 +1,7 @@
 use crate::{
-    commands::{self, OnKeyCallback, OnKeyCallbackKind},
+    commands::{self, engine::ScriptingEngine, OnKeyCallback, OnKeyCallbackKind},
     compositor::{Component, Context, Event, EventResult},
-    events::{OnModeSwitch, PostCommand},
+    events::{OnModeSwitch, PostCommand, TerminalFocusGained, TerminalFocusLost},
     handlers::completion::CompletionItem,
     key,
     keymap::{KeymapResult, Keymaps},
@@ -29,9 +29,9 @@ use helix_view::{
     graphics::{Color, CursorKind, Modifier, Rect, Style},
     input::{KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     keyboard::{KeyCode, KeyModifiers},
-    Document, Editor, Theme, View,
+    Document, DocumentId, Editor, Theme, View, ViewId,
 };
-use std::{mem::take, num::NonZeroUsize, ops, path::PathBuf, rc::Rc};
+use std::{mem::take, num::NonZeroUsize, ops, path::PathBuf, rc::Rc, sync::Arc};
 
 use tui::{buffer::Buffer as Surface, text::Span};
 
@@ -76,154 +76,384 @@ impl EditorView {
 
     pub fn render_view(
         &self,
-        editor: &Editor,
-        doc: &Document,
-        view: &View,
+        doc_id: DocumentId,
+        view_id: ViewId,
         viewport: Rect,
         surface: &mut Surface,
         is_focused: bool,
+        cx: &mut Context,
     ) {
-        let inner = view.inner_area(doc);
-        let area = view.area;
-        let theme = &editor.theme;
-        let config = editor.config();
-        let loader = editor.syn_loader.load();
-
-        let view_offset = doc.view_offset(view.id);
-
-        let text_annotations = view.text_annotations(doc, Some(theme));
-        let mut decorations = DecorationManager::default();
-
-        if is_focused && config.cursorline {
-            decorations.add_decoration(Self::cursorline(doc, view, theme));
-        }
-
-        if is_focused && config.cursorcolumn {
-            Self::highlight_cursorcolumn(doc, view, surface, theme, inner, &text_annotations);
-        }
-
-        // Set DAP highlights, if needed.
-        if let Some(frame) = editor.current_stack_frame() {
-            let dap_line = frame.line.saturating_sub(1);
-            let style = theme.get("ui.highlight.frameline");
-            let line_decoration = move |renderer: &mut TextRenderer, pos: LinePos| {
-                if pos.doc_line != dap_line {
-                    return;
-                }
-                renderer.set_style(Rect::new(inner.x, pos.visual_line, inner.width, 1), style);
-            };
-
-            decorations.add_decoration(line_decoration);
-        }
-
-        let syntax_highlighter =
-            Self::doc_syntax_highlighter(doc, view_offset.anchor, inner.height, &loader);
-        let mut overlays = Vec::new();
-
-        overlays.push(Self::overlay_syntax_highlights(
-            doc,
-            view_offset.anchor,
-            inner.height,
-            &text_annotations,
-        ));
-
-        if doc
-            .language_config()
-            .and_then(|config| config.rainbow_brackets)
-            .unwrap_or(config.rainbow_brackets)
+        let doc = cx.editor.document(doc_id).unwrap();
+        let view = cx.editor.tree.get(view_id);
         {
-            if let Some(overlay) =
-                Self::doc_rainbow_highlights(doc, view_offset.anchor, inner.height, theme, &loader)
-            {
-                overlays.push(overlay);
-            }
-        }
+            let editor = &cx.editor;
 
-        Self::doc_diagnostics_highlights_into(doc, theme, &mut overlays);
+            let inner = view.inner_area(doc);
+            let area = view.area;
+            let theme = &editor.theme;
+            let config = editor.config();
+            let loader = editor.syn_loader.load();
 
-        if is_focused {
-            if let Some(tabstops) = Self::tabstop_highlights(doc, theme) {
-                overlays.push(tabstops);
-            }
-            overlays.push(Self::doc_selection_highlights(
-                editor.mode(),
-                doc,
-                view,
-                theme,
-                &config.cursor_shape,
-                self.terminal_focused,
-            ));
-            if let Some(overlay) = Self::highlight_focused_view_elements(view, doc, theme) {
-                overlays.push(overlay);
-            }
-        }
+            let view_offset = doc.view_offset(view.id);
 
-        let gutter_overflow = view.gutter_offset(doc) == 0;
-        if !gutter_overflow {
-            Self::render_gutter(
-                editor,
-                doc,
-                view,
-                view.area,
-                theme,
-                is_focused & self.terminal_focused,
-                &mut decorations,
-            );
-        }
-
-        Self::render_rulers(editor, doc, view, inner, surface, theme);
-
-        let primary_cursor = doc
-            .selection(view.id)
-            .primary()
-            .cursor(doc.text().slice(..));
-        if is_focused {
-            decorations.add_decoration(text_decorations::Cursor {
-                cache: &editor.cursor_cache,
-                primary_cursor,
+            let mut text_annotations = view.text_annotations(doc, Some(theme));
+            let diff_view_info = editor.diff_session_for(view.id).and_then(|session| {
+                let side = session.side_for_view(view.id)?;
+                let partner_view_id = session.partner_view(view.id)?;
+                let hunks = session.hunks_arc();
+                let intra_line_cache = session.intra_line_cache_arc();
+                let doc_ids = session.doc_ids();
+                Some((side, partner_view_id, hunks, intra_line_cache, doc_ids))
             });
-        }
-        let width = view.inner_width(doc);
-        let config = doc.config.load();
-        let enable_cursor_line = view
-            .diagnostics_handler
-            .show_cursorline_diagnostics(doc, view.id);
-        let inline_diagnostic_config = config.inline_diagnostics.prepare(width, enable_cursor_line);
-        decorations.add_decoration(InlineDiagnostics::new(
-            doc,
-            theme,
-            primary_cursor,
-            inline_diagnostic_config,
-            config.end_of_line_diagnostics,
-        ));
-        render_document(
-            surface,
-            inner,
-            doc,
-            view_offset,
-            &text_annotations,
-            syntax_highlighter,
-            overlays,
-            theme,
-            decorations,
-        );
 
-        // if we're not at the edge of the screen, draw a right border
-        if viewport.right() != view.area.right() {
-            let x = area.right();
-            let border_style = theme.get("ui.window");
-            for y in area.top()..area.bottom() {
-                surface[(x, y)]
-                    .set_symbol(tui::symbols::line::VERTICAL)
-                    //.set_symbol(" ")
-                    .set_style(border_style);
+            // Add DiffAlignment line annotation last so it can account for other virtual text.
+            if let Some((side, partner_view_id, ref hunks, _, (doc_a_id, doc_b_id))) =
+                diff_view_info
+            {
+                // Compute filler counts in visual rows so soft-wrapped hunks stay
+                // aligned. Falls back to doc-line subtraction if the partner view
+                // can't be resolved (closed mid-render, etc.).
+                let fillers = (|| -> Option<Vec<u32>> {
+                    let partner_view = editor.tree.try_get(partner_view_id)?;
+                    let partner_doc_id = if side == helix_view::diff_session::DiffSide::A {
+                        doc_b_id
+                    } else {
+                        doc_a_id
+                    };
+                    let partner_doc = editor.documents.get(&partner_doc_id)?;
+                    let my_text_fmt = doc.text_format(view.inner_area(doc).width, Some(theme));
+                    let partner_text_fmt = partner_doc
+                        .text_format(partner_view.inner_area(partner_doc).width, Some(theme));
+                    Some(helix_view::diff_session::compute_visual_fillers(
+                        hunks,
+                        side,
+                        doc.text(),
+                        partner_doc.text(),
+                        &my_text_fmt,
+                        &partner_text_fmt,
+                    ))
+                })()
+                .unwrap_or_else(|| {
+                    // Doc-line fallback: matches the previous behavior.
+                    hunks
+                        .iter()
+                        .map(|h| {
+                            let (my_range, other_range) = match side {
+                                helix_view::diff_session::DiffSide::A => (&h.before, &h.after),
+                                helix_view::diff_session::DiffSide::B => (&h.after, &h.before),
+                            };
+                            (other_range.end - other_range.start)
+                                .saturating_sub(my_range.end - my_range.start)
+                        })
+                        .collect()
+                });
+                text_annotations.add_line_annotation(Box::new(
+                    helix_view::diff_session::DiffAlignment::new(
+                        Arc::clone(hunks),
+                        side,
+                        Arc::new(fillers),
+                    ),
+                ));
             }
-        }
 
-        if config.inline_diagnostics.disabled()
-            && config.end_of_line_diagnostics == DiagnosticFilter::Disable
-        {
-            Self::render_diagnostics(doc, view, inner, surface, theme);
+            let mut decorations = DecorationManager::default();
+
+            if is_focused && config.cursorline {
+                decorations.add_decoration(Self::cursorline(doc, view, theme));
+            }
+
+            if is_focused && config.cursorcolumn {
+                Self::highlight_cursorcolumn(doc, view, surface, theme, inner, &text_annotations);
+            }
+
+            if let Some((side, _, ref hunks, _, _)) = diff_view_info {
+                let hunks = Arc::clone(hunks);
+
+                // Look up `<base>.view` first, falling back to bare `<base>` for
+                // themes that only define the legacy scope. Falls through to a
+                // hardcoded color when neither key is set.
+                let style_deleted = diff_bg_style(
+                    diff_view_line_style(theme, "diff.minus")
+                        .unwrap_or_else(|| Style::default().fg(Color::Rgb(242, 44, 134))),
+                );
+                let style_added = diff_bg_style(
+                    diff_view_line_style(theme, "diff.plus")
+                        .unwrap_or_else(|| Style::default().fg(Color::Rgb(53, 191, 134))),
+                );
+                let style_modified = diff_bg_style(
+                    diff_view_line_style(theme, "diff.delta")
+                        .unwrap_or_else(|| Style::default().fg(Color::Rgb(111, 68, 240))),
+                );
+
+                let mut cursor: usize = 0;
+                let line_decoration = move |renderer: &mut TextRenderer, pos: LinePos| {
+                    let doc_line = pos.doc_line as u32;
+                    // Advance past hunks that ended before this line.
+                    // Relies on decorate_line being called in ascending doc_line order
+                    // within a single render pass. The closure is rebuilt each render_view
+                    // call so cursor resets to 0 implicitly every frame.
+                    while cursor < hunks.len() {
+                        let my_range = match side {
+                            helix_view::diff_session::DiffSide::A => hunks[cursor].before.clone(),
+                            helix_view::diff_session::DiffSide::B => hunks[cursor].after.clone(),
+                        };
+                        if my_range.end <= doc_line {
+                            cursor += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if let Some(hunk) = hunks.get(cursor) {
+                        let (my_range, other_range) = match side {
+                            helix_view::diff_session::DiffSide::A => {
+                                (hunk.before.clone(), hunk.after.clone())
+                            }
+                            helix_view::diff_session::DiffSide::B => {
+                                (hunk.after.clone(), hunk.before.clone())
+                            }
+                        };
+                        if my_range.contains(&doc_line) {
+                            let style = diff_line_style(
+                                side,
+                                other_range.is_empty(),
+                                style_deleted,
+                                style_added,
+                                style_modified,
+                            );
+                            renderer.set_style(
+                                Rect::new(inner.x, pos.visual_line, inner.width, 1),
+                                style,
+                            );
+                        }
+                    }
+                };
+                decorations.add_decoration(line_decoration);
+            }
+
+            // Set DAP highlights, if needed.
+            if let Some(frame) = editor.current_stack_frame() {
+                let dap_line = frame.line.saturating_sub(1);
+                let style = theme.get("ui.highlight.frameline");
+                let line_decoration = move |renderer: &mut TextRenderer, pos: LinePos| {
+                    if pos.doc_line != dap_line {
+                        return;
+                    }
+                    renderer.set_style(Rect::new(inner.x, pos.visual_line, inner.width, 1), style);
+                };
+
+                decorations.add_decoration(line_decoration);
+            }
+
+            let syntax_highlighter =
+                Self::doc_syntax_highlighter(doc, view_offset.anchor, inner.height, &loader);
+            let mut overlays = Vec::new();
+
+            overlays.push(Self::overlay_syntax_highlights(
+                doc,
+                view_offset.anchor,
+                inner.height,
+                &text_annotations,
+            ));
+
+            if doc
+                .language_config()
+                .and_then(|config| config.rainbow_brackets)
+                .unwrap_or(config.rainbow_brackets)
+            {
+                if let Some(overlay) = Self::doc_rainbow_highlights(
+                    doc,
+                    view_offset.anchor,
+                    inner.height,
+                    theme,
+                    &loader,
+                ) {
+                    overlays.push(overlay);
+                }
+            }
+
+            if let Some(overlay) = Self::doc_document_link_highlights(doc, theme) {
+                overlays.push(overlay);
+            }
+
+            Self::doc_diagnostics_highlights_into(doc, theme, &mut overlays);
+
+            // Full-line diff overlays. Pushed BEFORE the intra-line overlay below
+            // so intra-line (diff.delta.text) wins on changed-token cells via
+            // overlay ordering. Line decoration already sets the full-width bg;
+            // these overlays add fg (and an identical bg patch) to character
+            // cells so theme fg overrides syntax — classic vim "whole line in
+            // one color" behavior when the theme sets both fg+bg on diff scopes.
+            if let Some((side, _, ref hunks, _, (doc_a_id, doc_b_id))) = diff_view_info {
+                let rope_a = editor.documents[&doc_a_id].text().clone();
+                let rope_b = editor.documents[&doc_b_id].text().clone();
+                let my_rope = match side {
+                    helix_view::diff_session::DiffSide::A => &rope_a,
+                    helix_view::diff_session::DiffSide::B => &rope_b,
+                };
+
+                let (minus_ranges, plus_ranges, delta_ranges) =
+                    diff_line_char_ranges(hunks, my_rope, side);
+
+                // Only push the full-line overlay when the theme explicitly sets
+                // BOTH fg and bg on the scope. That pair signals "the theme wants
+                // to override syntax fg on diff lines" (vimdiff-style). Themes
+                // that set only fg (upstream nord et al.) rely on the fg-as-bg
+                // fallback in decoration and would break if we forced their fg
+                // over syntax. Themes that set only bg want syntax preserved too.
+                let push_if_overriding =
+                    |overlays: &mut Vec<OverlayHighlights>,
+                     scope: &str,
+                     ranges: Vec<std::ops::Range<usize>>| {
+                        if ranges.is_empty() {
+                            return;
+                        }
+                        let style = match diff_view_line_style(theme, scope) {
+                            Some(s) => s,
+                            None => return,
+                        };
+                        if style.fg.is_none() || style.bg.is_none() {
+                            return;
+                        }
+                        if let Some(highlight) = diff_view_highlight(theme, scope) {
+                            overlays.push(OverlayHighlights::Homogeneous { highlight, ranges });
+                        }
+                    };
+                push_if_overriding(&mut overlays, "diff.minus", minus_ranges);
+                push_if_overriding(&mut overlays, "diff.plus", plus_ranges);
+                push_if_overriding(&mut overlays, "diff.delta", delta_ranges);
+            }
+
+            // Intra-line diff highlighting via OverlayHighlights.
+            // Prefer the most-specific scope, falling back through the namespace chain:
+            // `diff.delta.view.text` (intra-line override in the diff viewer)
+            //   -> `diff.delta.view` (line-level override in the diff viewer)
+            //   -> `diff.delta` (legacy / shared).
+            // The hop into the `.view` namespace keeps the diff viewer's styling distinct
+            // from the bare `diff.delta` scope, which is shared with the diff language
+            // grammar and the VCS gutter.
+            if let Some((side, _, _, ref intra_line_cache, (doc_a_id, doc_b_id))) = diff_view_info {
+                let intra_highlight = theme
+                    .find_highlight_exact("diff.delta.view.text")
+                    .or_else(|| theme.find_highlight_exact("diff.delta.view"))
+                    .or_else(|| theme.find_highlight_exact("diff.delta"));
+                if let Some(highlight) = intra_highlight {
+                    let rope_a = editor.documents[&doc_a_id].text().clone();
+                    let rope_b = editor.documents[&doc_b_id].text().clone();
+                    let my_rope = match side {
+                        helix_view::diff_session::DiffSide::A => &rope_a,
+                        helix_view::diff_session::DiffSide::B => &rope_b,
+                    };
+
+                    let mut char_ranges = Vec::new();
+                    // Use the pre-computed per-hunk cache instead of running Myers diff per frame.
+                    for cached in intra_line_cache.iter() {
+                        let my_changes = match side {
+                            helix_view::diff_session::DiffSide::A => &cached.0,
+                            helix_view::diff_session::DiffSide::B => &cached.1,
+                        };
+                        for change in my_changes {
+                            char_ranges.push(change.to_char_range(my_rope));
+                        }
+                    }
+                    if !char_ranges.is_empty() {
+                        overlays.push(OverlayHighlights::Homogeneous {
+                            highlight,
+                            ranges: char_ranges,
+                        });
+                    }
+                }
+            }
+
+            if is_focused {
+                if config.lsp.auto_document_highlight {
+                    if let Some(overlay) = Self::doc_document_highlights(doc, view, theme) {
+                        overlays.push(overlay);
+                    }
+                }
+                if let Some(tabstops) = Self::tabstop_highlights(doc, theme) {
+                    overlays.push(tabstops);
+                }
+                overlays.push(Self::doc_selection_highlights(
+                    editor.mode(),
+                    doc,
+                    view,
+                    theme,
+                    &config.cursor_shape,
+                    self.terminal_focused,
+                ));
+                if let Some(overlay) = Self::highlight_focused_view_elements(view, doc, theme) {
+                    overlays.push(overlay);
+                }
+            }
+
+            let gutter_overflow = view.gutter_offset(doc) == 0;
+            if !gutter_overflow {
+                Self::render_gutter(
+                    editor,
+                    doc,
+                    view,
+                    view.area,
+                    theme,
+                    is_focused & self.terminal_focused,
+                    &mut decorations,
+                );
+            }
+
+            Self::render_rulers(editor, doc, view, inner, surface, theme);
+
+            let primary_cursor = doc
+                .selection(view.id)
+                .primary()
+                .cursor(doc.text().slice(..));
+            if is_focused {
+                decorations.add_decoration(text_decorations::Cursor {
+                    cache: &editor.cursor_cache,
+                    primary_cursor,
+                });
+            }
+            let width = view.inner_width(doc);
+            let config = doc.config.load();
+            let enable_cursor_line = view
+                .diagnostics_handler
+                .show_cursorline_diagnostics(doc, view.id);
+            let inline_diagnostic_config =
+                config.inline_diagnostics.prepare(width, enable_cursor_line);
+            decorations.add_decoration(InlineDiagnostics::new(
+                doc,
+                theme,
+                primary_cursor,
+                inline_diagnostic_config,
+                config.end_of_line_diagnostics,
+            ));
+            render_document(
+                surface,
+                inner,
+                doc,
+                view_offset,
+                &text_annotations,
+                syntax_highlighter,
+                overlays,
+                theme,
+                decorations,
+            );
+
+            // if we're not at the edge of the screen, draw a right border
+            if viewport.right() != view.area.right() {
+                let x = area.right();
+                let border_style = theme.get("ui.window");
+                for y in area.top()..area.bottom() {
+                    surface[(x, y)]
+                        .set_symbol(tui::symbols::line::VERTICAL)
+                        //.set_symbol(" ")
+                        .set_style(border_style);
+                }
+            }
+
+            if config.inline_diagnostics.disabled()
+                && config.end_of_line_diagnostics == DiagnosticFilter::Disable
+            {
+                Self::render_diagnostics(doc, view, inner, surface, theme);
+            }
         }
 
         let statusline_area = view
@@ -231,8 +461,14 @@ impl EditorView {
             .clip_top(view.area.height.saturating_sub(1))
             .clip_bottom(1); // -1 from bottom to remove commandline
 
-        let mut context =
-            statusline::RenderContext::new(editor, doc, view, is_focused, &self.spinners);
+        let mut context = statusline::RenderContext::new(
+            cx.editor,
+            cx.jobs,
+            view_id,
+            doc_id,
+            is_focused,
+            &self.spinners,
+        );
 
         statusline::render(&mut context, statusline_area, surface);
     }
@@ -343,6 +579,11 @@ impl EditorView {
         theme: &Theme,
         overlay_highlights: &mut Vec<OverlayHighlights>,
     ) {
+        // Skip redundant work if no diagnostics.
+        if doc.diagnostics().is_empty() {
+            return;
+        }
+
         use helix_core::diagnostic::{DiagnosticTag, Range, Severity};
         let get_scope_of = |scope| {
             theme
@@ -457,6 +698,60 @@ impl EditorView {
                 ranges: error_vec,
             },
         ]);
+    }
+
+    pub fn doc_document_highlights(
+        doc: &Document,
+        view: &View,
+        theme: &Theme,
+    ) -> Option<OverlayHighlights> {
+        let ranges = doc.document_highlights(view.id)?;
+        if ranges.is_empty() {
+            return None;
+        }
+
+        let highlight = theme
+            .find_highlight_exact("ui.highlight")
+            .or_else(|| theme.find_highlight_exact("ui.selection"))
+            .or_else(|| theme.find_highlight_exact("ui.cursor"))?;
+
+        Some(OverlayHighlights::Homogeneous {
+            highlight,
+            ranges: ranges.to_vec(),
+        })
+    }
+
+    pub fn doc_document_link_highlights(
+        doc: &Document,
+        theme: &Theme,
+    ) -> Option<OverlayHighlights> {
+        let highlight = theme
+            .find_highlight_exact("markup.link.url")
+            .or_else(|| theme.find_highlight_exact("markup.link"))?;
+
+        if doc.document_links.is_empty() {
+            return None;
+        }
+
+        let mut ranges: Vec<ops::Range<usize>> = Vec::new();
+        for link in &doc.document_links {
+            if link.start >= link.end {
+                continue;
+            }
+
+            match ranges.last_mut() {
+                Some(existing_range) if link.start <= existing_range.end => {
+                    existing_range.end = existing_range.end.max(link.end);
+                }
+                _ => ranges.push(link.start..link.end),
+            }
+        }
+
+        if ranges.is_empty() {
+            return None;
+        }
+
+        Some(OverlayHighlights::Homogeneous { highlight, ranges })
     }
 
     /// Get highlight spans for selections in a document view.
@@ -635,7 +930,7 @@ impl EditorView {
             let rem_width = surface.area.width.saturating_sub(used_width);
 
             x = surface
-                .set_stringn(x, viewport.y, text, rem_width as usize, style)
+                .set_stringn(x, viewport.y, &text, rem_width as usize, style)
                 .0;
 
             if x >= surface.area.right() {
@@ -870,7 +1165,11 @@ impl EditorView {
     ) -> Option<KeymapResult> {
         let mut last_mode = mode;
         self.pseudo_pending.extend(self.keymaps.pending());
-        let key_result = self.keymaps.get(mode, event);
+
+        // Check the engine for any buffer specific keybindings first
+        let key_result = ScriptingEngine::handle_keymap_event(self, mode, cxt, event)
+            .unwrap_or_else(|| self.keymaps.get(mode, event));
+
         cxt.editor.autoinfo = self.keymaps.sticky().map(|node| node.infobox());
 
         let mut execute_command = |command: &commands::MappableCommand| {
@@ -1096,6 +1395,20 @@ impl EditorView {
     }
 }
 
+/// Whether the focused doc's workspace is in restricted mode and running `trust` would
+/// change something visible at the workspace level.
+fn workspace_trust_indicator_visible(editor: &Editor) -> bool {
+    if editor.workspace_trust.implicit_level()
+        == helix_loader::workspace_trust::ImplicitTrustLevel::Insecure
+    {
+        return false;
+    }
+    let (_, doc) = helix_view::current_ref!(editor);
+    editor
+        .workspace_trust
+        .workspace_restricted(doc.workspace_root())
+}
+
 impl EditorView {
     /// must be called whenever the editor processed input that
     /// is not a `KeyEvent`. In these cases any pending keys/on next
@@ -1194,9 +1507,8 @@ impl EditorView {
 
                     let (view, doc) = current!(cxt.editor);
 
-                    let path = match doc.path() {
-                        Some(path) => path.clone(),
-                        None => return EventResult::Ignored(None),
+                    let Some(path) = doc.path().map(ToOwned::to_owned) else {
+                        return EventResult::Ignored(None);
                     };
 
                     if let Some(char_idx) =
@@ -1272,8 +1584,10 @@ impl EditorView {
                 };
 
                 if should_yank {
-                    commands::MappableCommand::yank_main_selection_to_primary_clipboard
-                        .execute(cxt);
+                    commands::yank_main_selection_to_register(
+                        cxt.editor,
+                        config.mouse_yank_register,
+                    );
                     EventResult::Consumed(None)
                 } else {
                     EventResult::Ignored(None)
@@ -1313,8 +1627,11 @@ impl EditorView {
                 }
 
                 if modifiers == KeyModifiers::ALT {
-                    commands::MappableCommand::replace_selections_with_primary_clipboard
-                        .execute(cxt);
+                    commands::replace_selections_with_register(
+                        cxt.editor,
+                        config.mouse_yank_register,
+                        cxt.count(),
+                    );
 
                     return EventResult::Consumed(None);
                 }
@@ -1323,7 +1640,13 @@ impl EditorView {
                     let doc = doc_mut!(editor, &view!(editor, view_id).doc);
                     doc.set_selection(view_id, Selection::point(pos));
                     cxt.editor.focus(view_id);
-                    commands::MappableCommand::paste_primary_clipboard_before.execute(cxt);
+
+                    commands::paste(
+                        cxt.editor,
+                        config.mouse_yank_register,
+                        commands::Paste::Before,
+                        cxt.count(),
+                    );
 
                     return EventResult::Consumed(None);
                 }
@@ -1502,16 +1825,19 @@ impl Component for EditorView {
             Event::Mouse(event) => self.handle_mouse_event(event, &mut cx),
             Event::IdleTimeout => self.handle_idle_timeout(&mut cx),
             Event::FocusGained => {
+                helix_event::dispatch(TerminalFocusGained { cx: &mut cx });
                 self.terminal_focused = true;
                 crate::handlers::auto_reload::on_focus_gained(context.editor);
                 EventResult::Consumed(None)
             }
             Event::FocusLost => {
+                helix_event::dispatch(TerminalFocusLost { cx: &mut cx });
                 if context.editor.config().auto_save.focus_lost {
                     let options = commands::WriteAllOptions {
                         force: false,
                         write_scratch: false,
                         auto_format: false,
+                        code_actions: false,
                     };
                     if let Err(e) = commands::typed::write_all_impl(context, options) {
                         context.editor.set_error(format!("{}", e));
@@ -1536,6 +1862,22 @@ impl Component for EditorView {
             _ => false,
         };
 
+        let mut area = area;
+
+        // TODO: This may need to get looked at!
+        if let Some(top) = cx.editor.editor_clipping.top {
+            area = area.clip_top(top);
+        }
+        if let Some(bottom) = cx.editor.editor_clipping.bottom {
+            area = area.clip_bottom(bottom);
+        }
+        if let Some(left) = cx.editor.editor_clipping.left {
+            area = area.clip_left(left);
+        }
+        if let Some(right) = cx.editor.editor_clipping.right {
+            area = area.clip_right(right);
+        }
+
         // -1 for commandline and -1 for bufferline
         let mut editor_area = area.clip_bottom(1);
         if use_bufferline {
@@ -1549,9 +1891,29 @@ impl Component for EditorView {
             Self::render_bufferline(cx.editor, area.with_height(1), surface);
         }
 
-        for (view, is_focused) in cx.editor.tree.views() {
-            let doc = cx.editor.document(view.doc).unwrap();
-            self.render_view(cx.editor, doc, view, area, surface, is_focused);
+        for session in &mut cx.editor.diff_sessions {
+            let version_a = cx.editor.documents[&session.doc_a()].version();
+            let version_b = cx.editor.documents[&session.doc_b()].version();
+            if session.needs_update(version_a, version_b) {
+                let rope_a = cx.editor.documents[&session.doc_a()].text().clone();
+                let rope_b = cx.editor.documents[&session.doc_b()].text().clone();
+                session.update_if_changed(version_a, version_b, &rope_a, &rope_b);
+            }
+        }
+
+        // Sync scroll position from the focused view to its diff partner.
+        let focus = cx.editor.tree.focus;
+        cx.editor.sync_diff_scroll(focus);
+
+        let views: Vec<(ViewId, bool)> = cx
+            .editor
+            .tree
+            .views()
+            .map(|(view, is_focused)| (view.id, is_focused))
+            .collect();
+        for (view_id, is_focused) in views {
+            let doc_id = cx.editor.tree.get(view_id).doc;
+            self.render_view(doc_id, view_id, area, surface, is_focused, cx);
         }
 
         if config.auto_info {
@@ -1601,13 +1963,30 @@ impl Component for EditorView {
             } else {
                 0
             };
+            let restricted = workspace_trust_indicator_visible(cx.editor);
+            let trust_width = if restricted { 3 } else { 0 };
             surface.set_string(
-                area.x + area.width.saturating_sub(key_width + macro_width),
+                area.x
+                    + area
+                        .width
+                        .saturating_sub(key_width + macro_width + trust_width),
                 area.y + area.height.saturating_sub(1),
                 disp.get(disp.len().saturating_sub(key_width as usize)..)
                     .unwrap_or(&disp),
                 style,
             );
+            if restricted {
+                let style = style
+                    .fg(helix_view::graphics::Color::Yellow)
+                    .add_modifier(Modifier::BOLD);
+                surface.set_string(
+                    area.x
+                        .saturating_add(area.width.saturating_sub(3 + macro_width)),
+                    area.y + area.height.saturating_sub(1),
+                    "[⚠]",
+                    style,
+                );
+            }
             if let Some((reg, _)) = cx.editor.macro_recording {
                 let disp = format!("[{}]", reg);
                 let style = style
@@ -1629,10 +2008,11 @@ impl Component for EditorView {
 
     fn cursor(&self, _area: Rect, editor: &Editor) -> (Option<Position>, CursorKind) {
         match editor.cursor() {
-            // all block cursors are drawn manually
+            // block cursors are also drawn manually, but keep the terminal
+            // cursor visible so terminals can still track it for effects
             (pos, CursorKind::Block) => {
                 if self.terminal_focused {
-                    (pos, CursorKind::Hidden)
+                    (pos, CursorKind::Block)
                 } else {
                     // use terminal cursor when terminal loses focus
                     (pos, CursorKind::Underline)
@@ -1650,5 +2030,402 @@ fn canonicalize_key(key: &mut KeyEvent) {
     } = key
     {
         key.modifiers.remove(KeyModifiers::SHIFT)
+    }
+}
+
+/// Look up the diff viewer's line-bg style for a base scope.
+///
+/// Tries `<base>.view` first (the diff viewer's own namespace, e.g.
+/// `diff.plus.view`), and falls back to the bare `<base>` so themes that only
+/// define the bare scope still color diff lines.
+///
+/// Uses `try_get_exact` (no rsplit cascade) on both lookups to keep the
+/// fallback bounded: it must not leak further to bare `diff`, which the `diff`
+/// language grammar and the VCS gutter already use for unrelated meanings.
+fn diff_view_line_style(theme: &helix_view::Theme, base: &str) -> Option<Style> {
+    theme
+        .try_get_exact(&format!("{base}.view"))
+        .or_else(|| theme.try_get_exact(base))
+}
+
+/// Look up an `OverlayHighlights` highlight for the diff viewer with the same
+/// bounded `<base>.view` -> `<base>` fallback as [`diff_view_line_style`].
+fn diff_view_highlight(
+    theme: &helix_view::Theme,
+    base: &str,
+) -> Option<helix_core::syntax::Highlight> {
+    theme
+        .find_highlight_exact(&format!("{base}.view"))
+        .or_else(|| theme.find_highlight_exact(base))
+}
+
+/// Row-decoration Style for a diff line from a theme `diff.*` scope.
+///
+/// - bg set (with or without fg): pass the style through unchanged so any
+///   modifiers (italic, bold, underline) the theme attached to the scope are
+///   honored on the diff line.
+/// - Only fg set: legacy fallback for themes that define diff scopes as
+///   gutter-only accents without an explicit bg. The fg is promoted to bg
+///   and modifiers are dropped, since they were attached to a fg we discard.
+/// - Neither set: passthrough.
+fn diff_bg_style(style: Style) -> Style {
+    match (style.bg, style.fg) {
+        (Some(_), _) => style,
+        (None, Some(fg)) => Style::default().bg(fg),
+        (None, None) => style,
+    }
+}
+
+/// Compute char ranges for each diff line category (minus/plus/delta) on the
+/// given side. Used to push full-line overlay highlights so diff scope fgs
+/// override syntax on diff lines — the decoration path can't do that because
+/// syntax rendering runs after line decoration and clobbers cell fg.
+///
+/// Returns `(minus_ranges, plus_ranges, delta_ranges)` as char offsets into
+/// `rope`.
+/// - `minus`: hunks on side A with an empty side B (pure deletion).
+/// - `plus`: hunks on side B with an empty side A (pure addition).
+/// - `delta`: hunks where both sides have lines (modified pair).
+type CharRangeVec = Vec<std::ops::Range<usize>>;
+
+fn diff_line_char_ranges(
+    hunks: &[helix_vcs::Hunk],
+    rope: &helix_core::Rope,
+    side: helix_view::diff_session::DiffSide,
+) -> (CharRangeVec, CharRangeVec, CharRangeVec) {
+    use helix_view::diff_session::DiffSide;
+    let mut minus = Vec::new();
+    let mut plus = Vec::new();
+    let mut delta = Vec::new();
+
+    for hunk in hunks {
+        let (my_range, other_range) = match side {
+            DiffSide::A => (hunk.before.clone(), hunk.after.clone()),
+            DiffSide::B => (hunk.after.clone(), hunk.before.clone()),
+        };
+
+        if my_range.is_empty() {
+            continue;
+        }
+
+        let start = rope.line_to_char(my_range.start as usize);
+        let end = rope.line_to_char(my_range.end as usize);
+        let line_range = start..end;
+
+        if other_range.is_empty() {
+            match side {
+                DiffSide::A => minus.push(line_range),
+                DiffSide::B => plus.push(line_range),
+            }
+        } else {
+            delta.push(line_range);
+        }
+    }
+
+    (minus, plus, delta)
+}
+
+/// Selects the diff line background style based on which side is being rendered
+/// and whether the opposite side has any content for this hunk.
+fn diff_line_style(
+    side: helix_view::diff_session::DiffSide,
+    other_range_empty: bool,
+    style_deleted: Style,
+    style_added: Style,
+    style_modified: Style,
+) -> Style {
+    if other_range_empty {
+        match side {
+            helix_view::diff_session::DiffSide::A => style_deleted,
+            helix_view::diff_session::DiffSide::B => style_added,
+        }
+    } else {
+        style_modified
+    }
+}
+
+#[cfg(test)]
+mod diff_coloring_tests {
+    use helix_view::{
+        diff_session::DiffSide,
+        graphics::{Color, Style},
+    };
+
+    use super::{diff_bg_style, diff_line_style};
+
+    fn mk(r: u8, g: u8, b: u8) -> Style {
+        Style::default().bg(Color::Rgb(r, g, b))
+    }
+
+    #[test]
+    fn diff_bg_style_preserves_fg_when_both_set() {
+        // vimdiff-style scope: theme sets both fg and bg (e.g., "white on red")
+        // so the fg overrides syntax on the diff line.
+        let input = Style::default()
+            .bg(Color::Rgb(191, 97, 106))
+            .fg(Color::Rgb(236, 239, 244));
+        let expected = Style::default()
+            .bg(Color::Rgb(191, 97, 106))
+            .fg(Color::Rgb(236, 239, 244));
+        assert_eq!(diff_bg_style(input), expected);
+    }
+
+    #[test]
+    fn diff_bg_style_bg_only_when_only_bg_set() {
+        // Subtle diff scope: only bg set, syntax fg remains visible underneath.
+        let input = Style::default().bg(Color::Rgb(120, 80, 88));
+        let expected = Style::default().bg(Color::Rgb(120, 80, 88));
+        assert_eq!(diff_bg_style(input), expected);
+    }
+
+    #[test]
+    fn diff_bg_style_uses_fg_as_bg_when_only_fg_set() {
+        // Legacy / gutter-only theme: scope defines fg but no bg, so fg is
+        // promoted to bg for the line decoration.
+        let input = Style::default().fg(Color::Rgb(191, 97, 106));
+        let expected = Style::default().bg(Color::Rgb(191, 97, 106));
+        assert_eq!(diff_bg_style(input), expected);
+    }
+
+    #[test]
+    fn diff_bg_style_passthrough_when_nothing_set() {
+        // Empty style returns unchanged (no-op on cell bgs).
+        let input = Style::default();
+        assert_eq!(diff_bg_style(input), Style::default());
+    }
+
+    #[test]
+    fn diff_bg_style_preserves_modifiers_when_bg_is_set() {
+        // m4rch3n1ng's bonus point: a theme attaching italic / bold to a
+        // diff scope should see those modifiers on the diff line as long as
+        // the theme also set a bg.
+        use helix_view::graphics::Modifier;
+        let input = Style::default()
+            .bg(Color::Rgb(31, 111, 78))
+            .add_modifier(Modifier::ITALIC)
+            .add_modifier(Modifier::BOLD);
+        let result = diff_bg_style(input);
+        assert!(result.add_modifier.contains(Modifier::ITALIC));
+        assert!(result.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(result.bg, Some(Color::Rgb(31, 111, 78)));
+    }
+
+    use super::{diff_view_highlight, diff_view_line_style};
+    use helix_view::Theme;
+
+    fn theme_from_toml(toml_str: &str) -> Theme {
+        let value: toml::Value = toml::from_str(toml_str).expect("valid theme toml");
+        Theme::from(value)
+    }
+
+    #[test]
+    fn diff_view_line_style_prefers_view_namespace() {
+        // Theme defines BOTH `.view` and bare; the `.view` entry must win.
+        let theme = theme_from_toml(
+            r##"
+"diff.plus" = { bg = "#000000" }
+"diff.plus.view" = { bg = "#112233" }
+            "##,
+        );
+        let style = diff_view_line_style(&theme, "diff.plus").expect("should resolve");
+        assert_eq!(style.bg, Some(Color::Rgb(0x11, 0x22, 0x33)));
+    }
+
+    #[test]
+    fn diff_view_line_style_falls_back_to_bare_scope() {
+        // Theme only defines bare `diff.plus`; the helper must return it as a soft fallback.
+        let theme = theme_from_toml(r##""diff.plus" = { bg = "#445566" }"##);
+        let style = diff_view_line_style(&theme, "diff.plus").expect("should fall back");
+        assert_eq!(style.bg, Some(Color::Rgb(0x44, 0x55, 0x66)));
+    }
+
+    #[test]
+    fn diff_view_line_style_returns_none_when_neither_is_defined() {
+        // Theme defines unrelated keys only; both lookups miss.
+        let theme = theme_from_toml(r##""ui.text" = { fg = "#ffffff" }"##);
+        assert!(diff_view_line_style(&theme, "diff.plus").is_none());
+    }
+
+    #[test]
+    fn diff_view_line_style_does_not_leak_to_bare_diff() {
+        // Bare `diff` is reserved for the language grammar / VCS gutter. The
+        // bounded fallback must NOT promote a bare `diff` style up to the line bg.
+        let theme = theme_from_toml(r##"diff = { fg = "#abcdef" }"##);
+        assert!(diff_view_line_style(&theme, "diff.plus").is_none());
+    }
+
+    #[test]
+    fn diff_view_line_style_handles_minus_and_delta_too() {
+        // Helper must work for every diff scope the renderer cares about.
+        let theme = theme_from_toml(
+            r##"
+"diff.minus.view" = { bg = "#101010" }
+"diff.delta.view" = { bg = "#202020" }
+            "##,
+        );
+        assert_eq!(
+            diff_view_line_style(&theme, "diff.minus").unwrap().bg,
+            Some(Color::Rgb(0x10, 0x10, 0x10))
+        );
+        assert_eq!(
+            diff_view_line_style(&theme, "diff.delta").unwrap().bg,
+            Some(Color::Rgb(0x20, 0x20, 0x20))
+        );
+    }
+
+    #[test]
+    fn diff_view_highlight_prefers_view_then_bare_then_none() {
+        // `.view` set: helper resolves to it.
+        let theme_view = theme_from_toml(
+            r##"
+"diff.delta" = { bg = "#000000" }
+"diff.delta.view" = { bg = "#abcdef" }
+            "##,
+        );
+        assert!(diff_view_highlight(&theme_view, "diff.delta").is_some());
+
+        // only bare set: helper still resolves (soft fallback).
+        let theme_bare = theme_from_toml(r##""diff.delta" = { bg = "#abcdef" }"##);
+        assert!(diff_view_highlight(&theme_bare, "diff.delta").is_some());
+
+        // neither set: helper returns None (no leakage to plain `diff`).
+        let theme_none = theme_from_toml(r##"diff = { fg = "#abcdef" }"##);
+        assert!(diff_view_highlight(&theme_none, "diff.delta").is_none());
+    }
+
+    use super::diff_line_char_ranges;
+    use helix_core::Rope;
+    use helix_vcs::Hunk;
+
+    #[test]
+    fn diff_line_char_ranges_pure_deletion_on_side_a() {
+        // 3-line rope; hunk deletes lines 0..2 from A (B side empty).
+        let rope = Rope::from("aaa\nbbb\nccc\n");
+        let hunk = Hunk {
+            before: 0..2,
+            after: 0..0,
+        };
+        let (minus, plus, delta) = diff_line_char_ranges(&[hunk], &rope, DiffSide::A);
+        assert_eq!(minus, vec![0..8]); // "aaa\nbbb\n" = 8 chars
+        assert!(plus.is_empty());
+        assert!(delta.is_empty());
+    }
+
+    #[test]
+    fn diff_line_char_ranges_pure_addition_on_side_b() {
+        // Hunk adds lines 1..3 on B (A side empty).
+        let rope = Rope::from("aaa\nbbb\nccc\n");
+        let hunk = Hunk {
+            before: 0..0,
+            after: 1..3,
+        };
+        let (minus, plus, delta) = diff_line_char_ranges(&[hunk], &rope, DiffSide::B);
+        assert!(minus.is_empty());
+        assert_eq!(plus, vec![4..12]); // "bbb\nccc\n" starts at char 4, length 8
+        assert!(delta.is_empty());
+    }
+
+    #[test]
+    fn diff_line_char_ranges_modified_pair_on_side_a() {
+        // Both sides have line 1; it's a paired modification.
+        let rope = Rope::from("aaa\nbbb\nccc\n");
+        let hunk = Hunk {
+            before: 1..2,
+            after: 1..2,
+        };
+        let (minus, plus, delta) = diff_line_char_ranges(&[hunk], &rope, DiffSide::A);
+        assert!(minus.is_empty());
+        assert!(plus.is_empty());
+        assert_eq!(delta, vec![4..8]); // "bbb\n"
+    }
+
+    #[test]
+    fn diff_line_char_ranges_modified_pair_on_side_b() {
+        // Same hunk viewed from side B: still a modified pair.
+        let rope = Rope::from("aaa\nBBB\nccc\n");
+        let hunk = Hunk {
+            before: 1..2,
+            after: 1..2,
+        };
+        let (minus, plus, delta) = diff_line_char_ranges(&[hunk], &rope, DiffSide::B);
+        assert!(minus.is_empty());
+        assert!(plus.is_empty());
+        assert_eq!(delta, vec![4..8]);
+    }
+
+    #[test]
+    fn diff_line_char_ranges_skips_empty_side_hunks() {
+        // An addition hunk viewed from side A: my_range (before) is empty,
+        // so the hunk contributes nothing to A-side overlays.
+        let rope = Rope::from("aaa\nbbb\n");
+        let hunk = Hunk {
+            before: 0..0,
+            after: 1..2,
+        };
+        let (minus, plus, delta) = diff_line_char_ranges(&[hunk], &rope, DiffSide::A);
+        assert!(minus.is_empty());
+        assert!(plus.is_empty());
+        assert!(delta.is_empty());
+    }
+
+    #[test]
+    fn diff_line_char_ranges_empty_hunks_list() {
+        let rope = Rope::from("aaa\n");
+        let (minus, plus, delta) = diff_line_char_ranges(&[], &rope, DiffSide::A);
+        assert!(minus.is_empty());
+        assert!(plus.is_empty());
+        assert!(delta.is_empty());
+    }
+
+    #[test]
+    fn diff_line_char_ranges_mixed_hunks_buckets_correctly() {
+        // Three hunks on side A: a pure deletion, a modified pair, and an
+        // addition (which contributes nothing since my_range is empty on A).
+        let rope = Rope::from("aaa\nbbb\nccc\nddd\neee\n");
+        let hunks = [
+            Hunk {
+                before: 0..1,
+                after: 0..0,
+            }, // pure deletion
+            Hunk {
+                before: 2..3,
+                after: 1..2,
+            }, // modified pair
+            Hunk {
+                before: 4..4,
+                after: 3..4,
+            }, // addition, empty A range
+        ];
+        let (minus, plus, delta) = diff_line_char_ranges(&hunks, &rope, DiffSide::A);
+        assert_eq!(minus, vec![0..4]); // "aaa\n"
+        assert!(plus.is_empty());
+        assert_eq!(delta, vec![8..12]); // "ccc\n" starts at char 8
+    }
+
+    #[test]
+    fn deletion_lines_use_minus_style() {
+        let deleted = mk(255, 0, 0); // red
+        let added = mk(0, 255, 0); // green
+        let modified = mk(255, 165, 0); // orange
+
+        // pure deletion on A side = red
+        assert_eq!(
+            diff_line_style(DiffSide::A, true, deleted, added, modified),
+            deleted
+        );
+        // pure addition on B side = green
+        assert_eq!(
+            diff_line_style(DiffSide::B, true, deleted, added, modified),
+            added
+        );
+        // modifications = orange regardless of side
+        assert_eq!(
+            diff_line_style(DiffSide::A, false, deleted, added, modified),
+            modified
+        );
+        assert_eq!(
+            diff_line_style(DiffSide::B, false, deleted, added, modified),
+            modified
+        );
     }
 }

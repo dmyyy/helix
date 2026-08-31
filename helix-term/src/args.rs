@@ -8,11 +8,13 @@ use std::path::{Path, PathBuf};
 pub struct Args {
     pub display_help: bool,
     pub display_version: bool,
+    pub diff: bool,
     pub health: bool,
     pub health_arg: Option<String>,
     pub load_tutor: bool,
     pub fetch_grammars: bool,
     pub build_grammars: bool,
+    pub strict: bool,
     pub split: Option<Layout>,
     pub verbosity: u64,
     pub log_file: Option<PathBuf>,
@@ -22,6 +24,7 @@ pub struct Args {
 }
 
 impl Args {
+    #[allow(clippy::too_many_lines)]
     pub fn parse_args() -> Result<Args> {
         let mut args = Args::default();
         let mut argv = std::env::args().peekable();
@@ -46,6 +49,8 @@ impl Args {
                 "--" => break, // stop parsing at this point treat the remaining as files
                 "--version" => args.display_version = true,
                 "--help" => args.display_help = true,
+                "--strict" => args.strict = true,
+                "--diff" | "-d" => args.diff = true,
                 "--tutor" => args.load_tutor = true,
                 "--vsplit" => match args.split {
                     Some(_) => anyhow::bail!("can only set a split once of a specific type"),

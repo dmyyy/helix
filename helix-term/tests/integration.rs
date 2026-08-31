@@ -15,10 +15,10 @@ mod test {
         Ok(())
     }
 
-    mod auto_indent;
     mod auto_pairs;
     mod command_line;
     mod commands;
+    mod diff_mode;
     mod languages;
     mod movement;
     mod splits;

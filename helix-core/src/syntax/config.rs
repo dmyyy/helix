@@ -1,8 +1,8 @@
 use crate::{auto_pairs::AutoPairs, diagnostic::Severity, Language};
 
-use globset::GlobSet;
 use helix_stdx::rope;
 use serde::{ser::SerializeSeq as _, Deserialize, Serialize};
+use serde_json::Value;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -20,7 +20,7 @@ pub struct Configuration {
     pub language_server: HashMap<String, LanguageServerConfiguration>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct LanguageConfiguration {
     #[serde(skip)]
@@ -36,7 +36,7 @@ pub struct LanguageConfiguration {
     #[serde(default)]
     pub shebangs: Vec<String>, // interpreter(s) associated with language
     #[serde(default)]
-    pub roots: Vec<String>, // these indicate project roots <.git, Cargo.toml>
+    pub roots: RootMarkers, // these indicate project roots <.git, Cargo.toml>
     #[serde(
         default,
         skip_serializing,
@@ -55,6 +55,9 @@ pub struct LanguageConfiguration {
 
     #[serde(default)]
     pub auto_format: bool,
+
+    #[serde(default)]
+    pub code_actions_on_save: Option<Vec<String>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub formatter: Option<FormatterConfiguration>,
@@ -112,7 +115,52 @@ impl LanguageConfiguration {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+pub type RootMarkers = GlobSet;
+
+/// A wrapper around `globset::GlobSet` which implements `Serialize` and `Deserialize`.
+#[derive(Default, Debug, Clone)]
+pub struct GlobSet {
+    pub inner: globset::GlobSet,
+    /// Glob patterns as-is before building. This is only used for `Serialize`.
+    pub patterns: Vec<String>,
+}
+
+impl GlobSet {
+    pub fn is_match<P: AsRef<std::path::Path>>(&self, path: P) -> bool {
+        self.inner.is_match(path)
+    }
+}
+
+impl Serialize for GlobSet {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut patterns = serializer.serialize_seq(Some(self.patterns.len()))?;
+        for pattern in &self.patterns {
+            patterns.serialize_element(pattern)?;
+        }
+        patterns.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for GlobSet {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let patterns: Vec<String> = Deserialize::deserialize(deserializer)?;
+        let mut builder = globset::GlobSetBuilder::new();
+        for pattern in &patterns {
+            let glob = globset::Glob::new(pattern).map_err(serde::de::Error::custom)?;
+            builder.add(glob);
+        }
+        let inner = builder.build().map_err(serde::de::Error::custom)?;
+        Ok(Self { inner, patterns })
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum FileType {
     /// The extension of the file, either the `Path::extension` or the full
     /// filename if the file does not have an extension.
@@ -265,6 +313,7 @@ pub enum LanguageServerFeature {
     DocumentHighlight,
     Completion,
     CodeAction,
+    DocumentLinks,
     WorkspaceCommand,
     DocumentSymbols,
     WorkspaceSymbols,
@@ -274,6 +323,7 @@ pub enum LanguageServerFeature {
     RenameSymbol,
     InlayHints,
     DocumentColors,
+    CallHierarchy,
 }
 
 impl Display for LanguageServerFeature {
@@ -291,6 +341,7 @@ impl Display for LanguageServerFeature {
             DocumentHighlight => "document-highlight",
             Completion => "completion",
             CodeAction => "code-action",
+            DocumentLinks => "document-links",
             WorkspaceCommand => "workspace-command",
             DocumentSymbols => "document-symbols",
             WorkspaceSymbols => "workspace-symbols",
@@ -299,6 +350,7 @@ impl Display for LanguageServerFeature {
             RenameSymbol => "rename-symbol",
             InlayHints => "inlay-hints",
             DocumentColors => "document-colors",
+            CallHierarchy => "call-hierarchy",
         };
         write!(f, "{feature}",)
     }
@@ -318,7 +370,7 @@ enum LanguageServerFeatureConfiguration {
     Simple(String),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct LanguageServerFeatures {
     pub name: String,
     pub only: HashSet<LanguageServerFeature>,
@@ -381,23 +433,7 @@ where
     serializer.end()
 }
 
-fn deserialize_required_root_patterns<'de, D>(deserializer: D) -> Result<Option<GlobSet>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let patterns = Vec::<String>::deserialize(deserializer)?;
-    if patterns.is_empty() {
-        return Ok(None);
-    }
-    let mut builder = globset::GlobSetBuilder::new();
-    for pattern in patterns {
-        let glob = globset::Glob::new(&pattern).map_err(serde::de::Error::custom)?;
-        builder.add(glob);
-    }
-    builder.build().map(Some).map_err(serde::de::Error::custom)
-}
-
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct LanguageServerConfiguration {
     pub command: String,
@@ -410,11 +446,7 @@ pub struct LanguageServerConfiguration {
     pub config: Option<serde_json::Value>,
     #[serde(default = "default_timeout")]
     pub timeout: u64,
-    #[serde(
-        default,
-        skip_serializing,
-        deserialize_with = "deserialize_required_root_patterns"
-    )]
+    #[serde(default)]
     pub required_root_patterns: Option<GlobSet>,
 }
 
@@ -443,22 +475,13 @@ pub enum DebugConfigCompletion {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum DebugArgumentValue {
-    String(String),
-    Array(Vec<String>),
-    Boolean(bool),
-    Table(HashMap<String, String>),
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct DebugTemplate {
     pub name: String,
     pub request: String,
     #[serde(default)]
     pub completion: Vec<DebugConfigCompletion>,
-    pub args: HashMap<String, DebugArgumentValue>,
+    pub args: HashMap<String, Value>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
@@ -483,7 +506,7 @@ pub struct DebuggerQuirks {
     pub absolute_paths: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct IndentationConfiguration {
     #[serde(deserialize_with = "deserialize_tab_width")]
@@ -627,6 +650,6 @@ where
     Ok(Option::<AutoPairConfig>::deserialize(deserializer)?.and_then(AutoPairConfig::into))
 }
 
-fn default_timeout() -> u64 {
+pub fn default_timeout() -> u64 {
     20
 }
