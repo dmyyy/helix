@@ -454,6 +454,13 @@ impl EditorView {
             {
                 Self::render_diagnostics(doc, view, inner, surface, theme);
             }
+
+            if config.dim_unfocused && !is_focused {
+                surface.set_style(
+                    view.area.clip_bottom(1),
+                    Style::default().add_modifier(Modifier::DIM),
+                );
+            }
         }
 
         let statusline_area = view

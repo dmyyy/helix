@@ -311,6 +311,8 @@ pub struct Config {
     pub cursorline: bool,
     /// Highlight the columns cursors are currently on. Defaults to false.
     pub cursorcolumn: bool,
+    /// Dim unfocused editor views. Defaults to false.
+    pub dim_unfocused: bool,
     #[serde(deserialize_with = "deserialize_gutter_seq_or_struct")]
     pub gutters: GutterConfig,
     /// Middle click paste support. Defaults to true.
@@ -500,9 +502,18 @@ impl From<&WorkspaceTrustConfig> for helix_loader::workspace_trust::Config {
 impl Config {
     pub fn code_action_hint(&self) -> bool {
         self.gutters.layout.contains(&GutterType::CodeActionHint)
-            || self.statusline.left.contains(&StatusLineElement::CodeActionHint)
-            || self.statusline.center.contains(&StatusLineElement::CodeActionHint)
-            || self.statusline.right.contains(&StatusLineElement::CodeActionHint)
+            || self
+                .statusline
+                .left
+                .contains(&StatusLineElement::CodeActionHint)
+            || self
+                .statusline
+                .center
+                .contains(&StatusLineElement::CodeActionHint)
+            || self
+                .statusline
+                .right
+                .contains(&StatusLineElement::CodeActionHint)
     }
 }
 
@@ -1227,6 +1238,7 @@ impl Default for Config {
             line_number: LineNumber::Absolute,
             cursorline: false,
             cursorcolumn: false,
+            dim_unfocused: false,
             gutters: GutterConfig::default(),
             middle_click_paste: true,
             auto_pairs: AutoPairConfig::default(),
