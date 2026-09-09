@@ -267,7 +267,7 @@ impl EditorView {
             .map(|ruler| viewport.x + ruler);
 
         for col in ruler_cols {
-            for y in viewport.y..viewport.height {
+            for y in viewport.top()..viewport.bottom() {
                 surface.set_string(col, y, &config.ruler_char, ruler_theme);
             }
         }
