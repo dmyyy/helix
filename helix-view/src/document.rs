@@ -44,6 +44,7 @@ use helix_core::{
 };
 
 use crate::{
+    ansi::AnsiStyleSpan,
     editor::Config,
     events::{DocumentDidChange, SelectionDidChange},
     expansion,
@@ -141,6 +142,7 @@ pub enum DocumentOpenError {
 pub struct Document {
     pub(crate) id: DocumentId,
     text: Rope,
+    ansi_styles: Option<Vec<AnsiStyleSpan>>,
     selections: HashMap<ViewId, Selection>,
     view_data: HashMap<ViewId, ViewData>,
     pub active_snippet: Option<ActiveSnippet>,
@@ -749,6 +751,7 @@ impl Document {
             encoding,
             has_bom,
             text,
+            ansi_styles: None,
             selections: HashMap::default(),
             inlay_hints: HashMap::default(),
             inlay_hints_oudated: false,
@@ -1493,6 +1496,7 @@ impl Document {
             }
             return true;
         }
+        self.ansi_styles = None;
 
         self.modified_since_accessed = true;
         self.version += 1;
@@ -2103,6 +2107,26 @@ impl Document {
     }
 
     #[inline]
+    pub fn ansi_styles(&self) -> Option<&[AnsiStyleSpan]> {
+        self.ansi_styles.as_deref()
+    }
+
+    /// Normalize ANSI pager output and attach direct terminal style spans.
+    pub fn render_ansi(&mut self, view_id: ViewId) -> bool {
+        let output = crate::ansi::render(&self.text.to_string());
+        let transaction = Transaction::change(
+            self.text(),
+            std::iter::once((0, self.text.len_chars(), Some(output.text.into()))),
+        )
+        .with_selection(self.selection(view_id).clone());
+        if !self.apply_temporary(&transaction, view_id) {
+            return false;
+        }
+        self.ansi_styles = Some(output.spans);
+        true
+    }
+
+    #[inline]
     pub fn selection(&self, view_id: ViewId) -> &Selection {
         &self.selections[&view_id]
     }
@@ -2602,6 +2626,39 @@ mod test {
                 range_length: None,
             }]
         );
+    }
+
+    #[test]
+    fn document_changes_clear_ansi_styles() {
+        let mut doc = Document::from(
+            Rope::from("\x1b[31mtext"),
+            None,
+            Arc::new(ArcSwap::new(Arc::new(Config::default()))),
+            Arc::new(ArcSwap::from_pointee(syntax::Loader::default())),
+        );
+        let view = ViewId::default();
+        doc.set_selection(view, Selection::point(0));
+        assert!(doc.render_ansi(view));
+
+        let transaction = Transaction::insert(doc.text(), doc.selection(view), "!".into());
+        assert!(doc.apply(&transaction, view));
+        assert!(doc.ansi_styles().is_none());
+    }
+
+    #[test]
+    fn render_ansi_replaces_control_sequences() {
+        let mut doc = Document::from(
+            Rope::from("\x1b[31mred\x1b[m"),
+            None,
+            Arc::new(ArcSwap::new(Arc::new(Config::default()))),
+            Arc::new(ArcSwap::from_pointee(syntax::Loader::default())),
+        );
+        let view = ViewId::default();
+        doc.set_selection(view, Selection::point(0));
+
+        assert!(doc.render_ansi(view));
+        assert_eq!(doc.text(), "red");
+        assert_eq!(doc.ansi_styles().unwrap().len(), 1);
     }
 
     #[test]

@@ -189,6 +189,22 @@ impl Application {
             editor.open(&path, Action::VerticalSplit)?;
             // Unset path to prevent accidentally saving to the original tutor file.
             doc_mut!(editor).set_path(None);
+        } else if args.ansi {
+            let mut files = args.files.into_iter();
+            let Some((path, positions)) = files.next() else {
+                anyhow::bail!("--ansi requires a file path");
+            };
+            if files.next().is_some() {
+                anyhow::bail!("--ansi accepts at most one file path");
+            }
+            if path.is_dir() {
+                anyhow::bail!("--ansi requires a file path");
+            }
+            let doc_id = editor.open(&path, Action::VerticalSplit)?;
+            let view_id = editor.tree.focus;
+            doc_mut!(editor, &doc_id).render_ansi(view_id);
+            apply_diff_positions(&mut editor, view_id, doc_id, &positions);
+            editor.set_status("Loaded ANSI output.");
         } else if args.diff {
             // Filter out directory paths so `hx . --diff a b` works as expected.
             let files: Vec<_> = args

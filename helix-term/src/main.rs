@@ -46,6 +46,7 @@ ARGS:
 
 FLAGS:
     -h, --help                     Print help information
+    -a, --ansi                     Render ANSI escape sequences
     --strict                       Bail on error for commands that can fail.
     --tutor                        Load the tutorial
     --health [CATEGORY]            Check for potential errors in editor setup

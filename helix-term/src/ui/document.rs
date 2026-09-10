@@ -1,5 +1,6 @@
 use std::cmp::min;
 
+use crate::ansi::AnsiHighlighter;
 use helix_core::doc_formatter::{DocumentFormatter, FormattedGrapheme, GraphemeSource, TextFormat};
 use helix_core::graphemes::Grapheme;
 use helix_core::str_utils::char_to_byte_idx;
@@ -7,6 +8,7 @@ use helix_core::syntax::{self, HighlightEvent, Highlighter, OverlayHighlights};
 use helix_core::text_annotations::TextAnnotations;
 use helix_core::{visual_offset_from_block, Position, RopeSlice};
 use helix_stdx::rope::RopeSliceExt;
+use helix_view::ansi::AnsiStyleSpan;
 use helix_view::editor::{WhitespaceConfig, WhitespaceRenderValue};
 use helix_view::graphics::Rect;
 use helix_view::theme::Style;
@@ -78,6 +80,7 @@ pub fn render_document(
         &doc.text_format(viewport.width, Some(theme)),
         doc_annotations,
         syntax_highlighter,
+        doc.ansi_styles(),
         overlay_highlights,
         theme,
         decorations,
@@ -92,6 +95,7 @@ pub fn render_text(
     text_fmt: &TextFormat,
     text_annotations: &TextAnnotations,
     syntax_highlighter: Option<Highlighter<'_>>,
+    ansi_styles: Option<&[AnsiStyleSpan]>,
     overlay_highlights: Vec<syntax::OverlayHighlights>,
     theme: &Theme,
     mut decorations: DecorationManager,
@@ -105,6 +109,7 @@ pub fn render_text(
     let mut syntax_highlighter =
         SyntaxHighlighter::new(syntax_highlighter, text, theme, renderer.text_style);
     let mut overlay_highlighter = OverlayHighlighter::new(overlay_highlights, theme);
+    let mut ansi_highlighter = ansi_styles.map(AnsiHighlighter::new);
 
     let mut last_line_pos = LinePos::sentinel();
     let mut last_line_end = 0;
@@ -156,6 +161,12 @@ pub fn render_text(
             overlay_highlighter.advance();
         }
 
+        let ansi_style = ansi_highlighter.as_mut().and_then(|highlighter| {
+            while grapheme.char_idx >= highlighter.pos {
+                highlighter.advance();
+            }
+            highlighter.style
+        });
         let grapheme_style = if let GraphemeSource::VirtualText { highlight } = grapheme.source {
             let mut style = renderer.text_style;
             if let Some(highlight) = highlight {
@@ -163,11 +174,13 @@ pub fn render_text(
             }
             GraphemeStyle {
                 syntax_style: style,
+                ansi_style: None,
                 overlay_style: Style::default(),
             }
         } else {
             GraphemeStyle {
                 syntax_style: syntax_highlighter.style,
+                ansi_style,
                 overlay_style: overlay_highlighter.style,
             }
         };
@@ -213,6 +226,7 @@ pub struct TextRenderer<'a> {
 
 pub struct GraphemeStyle {
     syntax_style: Style,
+    ansi_style: Option<Style>,
     overlay_style: Style,
 }
 
@@ -350,6 +364,9 @@ impl<'a> TextRenderer<'a> {
         let mut style = grapheme_style.syntax_style;
         if is_whitespace {
             style = style.patch(self.whitespace_style);
+        }
+        if let Some(ansi_style) = grapheme_style.ansi_style {
+            style = style.patch(ansi_style);
         }
         style = style.patch(grapheme_style.overlay_style);
 

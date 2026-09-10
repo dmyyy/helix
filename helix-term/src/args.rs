@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 pub struct Args {
     pub display_help: bool,
     pub display_version: bool,
+    pub ansi: bool,
     pub diff: bool,
     pub health: bool,
     pub health_arg: Option<String>,
@@ -51,6 +52,7 @@ impl Args {
                 "--help" => args.display_help = true,
                 "--strict" => args.strict = true,
                 "--diff" | "-d" => args.diff = true,
+                "--ansi" => args.ansi = true,
                 "--tutor" => args.load_tutor = true,
                 "--vsplit" => match args.split {
                     Some(_) => anyhow::bail!("can only set a split once of a specific type"),
@@ -100,6 +102,7 @@ impl Args {
                     let arg = arg.get(1..).unwrap().chars();
                     for chr in arg {
                         match chr {
+                            'a' => args.ansi = true,
                             'v' => args.verbosity += 1,
                             'V' => args.display_version = true,
                             'h' => args.display_help = true,
