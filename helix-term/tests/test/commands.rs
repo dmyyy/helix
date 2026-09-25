@@ -275,6 +275,26 @@ async fn test_multi_selection_shell_commands() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_buffer_close_keeps_a_focused_view() -> anyhow::Result<()> {
+    let mut app = AppBuilder::new().build()?;
+
+    test_key_sequence(
+        &mut app,
+        Some(
+            ":new<ret>:insert-output printf x<ret>:buffer-close!<ret>:redraw<ret>:reload-all<ret>",
+        ),
+        Some(&|app| {
+            assert_eq!(app.editor.tree.views().count(), 1);
+            helpers::assert_status_not_error(&app.editor);
+        }),
+        false,
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_undo_redo() -> anyhow::Result<()> {
     // A jumplist selection is created at a point which is undone.
     //
