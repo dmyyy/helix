@@ -2293,8 +2293,37 @@ impl Editor {
             })
             .collect();
 
-        for action in actions {
+        // Keep one view alive while closing the final visible document. Calling
+        // `close` for every view temporarily leaves the tree focused on its root
+        // container, which lets subsequent commands observe an invalid focused view.
+        let replacement_at = (actions.len() == self.tree.views().count()
+            && actions
+                .iter()
+                .all(|action| matches!(action, Action::Close(_))))
+        .then(|| {
+            actions
+                .iter()
+                .rposition(|action| matches!(action, Action::Close(_)))
+        })
+        .flatten();
+        let replacement_doc_id = replacement_at.map(|_| {
+            self.documents
+                .keys()
+                .copied()
+                .find(|&id| id != doc_id)
+                .unwrap_or_else(|| {
+                    self.new_document(Document::default(
+                        self.config.clone(),
+                        self.syn_loader.clone(),
+                    ))
+                })
+        });
+
+        for (index, action) in actions.into_iter().enumerate() {
             match action {
+                Action::Close(view_id) if replacement_at == Some(index) => {
+                    self.replace_document_in_view(view_id, replacement_doc_id.unwrap());
+                }
                 Action::Close(view_id) => {
                     self.close(view_id);
                 }
@@ -2305,29 +2334,6 @@ impl Editor {
         }
 
         let doc = self.documents.remove(&doc_id).unwrap();
-
-        // If the document we removed was visible in all views, we will have no more views. We don't
-        // want to close the editor just for a simple buffer close, so we need to create a new view
-        // containing either an existing document, or a brand new document.
-        if self.tree.views().next().is_none() {
-            let doc_id = self
-                .documents
-                .iter()
-                .map(|(&doc_id, _)| doc_id)
-                .next()
-                .unwrap_or_else(|| {
-                    self.new_document(Document::default(
-                        self.config.clone(),
-                        self.syn_loader.clone(),
-                    ))
-                });
-            let view = View::new(doc_id, self.config().gutters.clone());
-            let view_id = self.tree.insert(view);
-            let doc = doc_mut!(self, &doc_id);
-            doc.ensure_view_init(view_id);
-            doc.mark_as_focused();
-        }
-
         self._refresh();
 
         helix_event::dispatch(DocumentDidClose { editor: self, doc });
@@ -2898,7 +2904,7 @@ fn try_restore_indent(doc: &mut Document, view: &mut View) {
     };
 
     fn inserted_a_new_blank_line(changes: &[Operation], pos: usize, line_end_pos: usize) -> bool {
-        if let [Operation::Retain(move_pos), Operation::Insert(ref inserted_str), Operation::Retain(_)] =
+        if let [Operation::Retain(move_pos), Operation::Insert(inserted_str), Operation::Retain(_)] =
             changes
         {
             let mut graphemes = inserted_str.graphemes(true);
