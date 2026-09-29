@@ -12,6 +12,7 @@ pub mod health;
 pub mod job;
 pub mod keymap;
 pub mod logging;
+pub(crate) mod markdown_images;
 pub mod ui;
 
 #[cfg(not(windows))]

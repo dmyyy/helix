@@ -421,7 +421,11 @@ pub fn char_idx_at_visual_block_offset(
     let mut last_char_idx = formatter.next_char_pos();
     let mut found_non_virtual_on_row = false;
     let mut last_row = 0;
+    let mut eof_row = None;
     for grapheme in &mut formatter {
+        if grapheme.source.is_eof() {
+            eof_row = Some(grapheme.visual_pos.row);
+        }
         match grapheme.visual_pos.row.cmp(&row) {
             Ordering::Equal => {
                 if grapheme.visual_pos.col + grapheme.width() > column {
@@ -435,6 +439,8 @@ pub fn char_idx_at_visual_block_offset(
                     last_char_idx = grapheme.char_idx;
                 }
             }
+            // Rows skipped between real graphemes are virtual reservations.
+            Ordering::Greater if row > last_row => return (last_char_idx, row - last_row),
             Ordering::Greater if found_non_virtual_on_row => return (last_char_idx, 0),
             Ordering::Greater => return (last_char_idx, row - last_row),
             Ordering::Less => {
@@ -443,6 +449,14 @@ pub fn char_idx_at_visual_block_offset(
                     last_char_idx = grapheme.char_idx;
                 }
             }
+        }
+    }
+
+    if let Some(eof_row) = eof_row {
+        let reserved_rows = formatter.next_visual_pos().row.saturating_sub(eof_row);
+        if reserved_rows != 0 && row > eof_row {
+            // Trailing rows map to EOF without inventing a document position.
+            return (text.len_chars(), (row - eof_row).min(reserved_rows));
         }
     }
 

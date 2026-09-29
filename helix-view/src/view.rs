@@ -1,6 +1,6 @@
 use crate::{
     align_view,
-    annotations::diagnostics::InlineDiagnostics,
+    annotations::{diagnostics::InlineDiagnostics, virtual_lines::VirtualLineMap},
     document::{DocumentColorSwatches, DocumentInlayHints},
     editor::{GutterConfig, GutterType},
     graphics::Rect,
@@ -172,6 +172,8 @@ pub struct View {
     // left to future work. For now we treat all views as focused and give them
     // each their own handler.
     pub diagnostics_handler: DiagnosticsHandler,
+    /// Generic non-text rows installed by terminal presentation features.
+    pub virtual_lines: VirtualLineMap,
 }
 
 impl fmt::Debug for View {
@@ -197,6 +199,7 @@ impl View {
             gutters,
             doc_revisions: HashMap::new(),
             diagnostics_handler: DiagnosticsHandler::new(),
+            virtual_lines: VirtualLineMap::default(),
         }
     }
 
@@ -461,6 +464,10 @@ impl View {
         theme: Option<&Theme>,
     ) -> TextAnnotations<'a> {
         let mut text_annotations = TextAnnotations::default();
+        if self.virtual_lines.matches(doc.id(), doc.version()) {
+            text_annotations.add_line_annotation(self.virtual_lines.annotation());
+        }
+
 
         if let Some(labels) = doc.jump_labels.get(&self.id) {
             let style = theme.and_then(|t| t.find_highlight("ui.virtual.jump-label"));

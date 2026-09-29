@@ -1,6 +1,6 @@
 use arc_swap::{access::Map, ArcSwap};
 use futures_util::Stream;
-use helix_core::{diagnostic::Severity, pos_at_coords, syntax, Position, Range, Selection};
+use helix_core::{diagnostic::Severity, line_ending::line_end_char_index, pos_at_coords, syntax, Position, Range, Selection};
 use helix_lsp::{
     jsonrpc,
     lsp::{self, notification::Notification},
@@ -81,6 +81,9 @@ pub struct Application {
     lsp_progress: LspProgressMap,
 
     theme_mode: Option<theme::Mode>,
+    /// Markdown previews are prepared before the text frame and projected after it.
+    markdown_images: crate::markdown_images::MarkdownImageScene,
+    image_placements: Vec<tui::image::ImagePlacement>,
 }
 
 fn apply_diff_positions(
@@ -346,6 +349,8 @@ impl Application {
             jobs,
             lsp_progress: LspProgressMap::new(),
             theme_mode,
+            markdown_images: crate::markdown_images::MarkdownImageScene::default(),
+            image_placements: Vec::new(),
         };
 
         Ok(app)
@@ -357,14 +362,9 @@ impl Application {
             self.compositor.full_redraw = false;
         }
 
-        let mut cx = crate::compositor::Context {
-            editor: &mut self.editor,
-            jobs: &mut self.jobs,
-            scroll: None,
-        };
 
         helix_event::start_frame();
-        cx.editor.needs_redraw = false;
+        self.editor.needs_redraw = false;
 
         let area = self
             .terminal
@@ -372,16 +372,39 @@ impl Application {
             .expect("Unable to determine terminal size");
 
         // TODO: need to recalculate view tree if necessary
+        let image_cells = self.terminal.backend().image_cell_size().ok().flatten();
+        self.markdown_images.prepare(&mut self.editor, area, image_cells);
+        // Reveal a preview once when the cursor enters its source line.
+        for (view, _) in self.editor.tree.views() {
+            let doc = doc_mut!(self.editor, &view.doc);
+            let text = doc.text().slice(..);
+            let cursor = doc.selection(view.id).primary().cursor(text);
+            let line = text.char_to_line(cursor);
+            let source_line = (view.virtual_lines.rows_at(line_end_char_index(&text, line)) != 0).then_some(line);
+            if !self.markdown_images.reveal_source_line(view.id, source_line) {
+                continue;
+            }
+            let mut offset = doc.view_offset(view.id);
+            offset.anchor = text.line_to_char(line);
+            offset.vertical_offset = 0;
+            doc.set_view_offset(view.id, offset);
+        }
 
         let surface = self.terminal.current_buffer_mut();
+        let mut cx = crate::compositor::Context {
+            editor: &mut self.editor,
+            jobs: &mut self.jobs,
+            scroll: None,
+        };
 
         self.compositor.render(area, surface, &mut cx);
+        self.markdown_images.project(&self.editor, &[], &mut self.image_placements);
         let (pos, kind) = self.compositor.cursor(area, &self.editor);
         // reset cursor cache
         self.editor.cursor_cache.reset();
 
         let pos = pos.map(|pos| (pos.col as u16, pos.row as u16));
-        self.terminal.draw(pos, kind).unwrap();
+        self.terminal.draw(pos, kind, &self.image_placements).unwrap();
     }
 
     pub async fn event_loop<S>(&mut self, input_stream: &mut S)

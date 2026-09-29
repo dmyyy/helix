@@ -2024,7 +2024,8 @@ pub fn scroll(cx: &mut Context, offset: usize, direction: Direction, sync_cursor
                 &text_fmt,
                 &annotations,
             );
-            head += (off != 0) as usize;
+            // A virtual row maps to its preceding real anchor; advance at most to EOF.
+            head = head.saturating_add((off != 0) as usize).min(doc_text.len_chars());
             if head <= cursor {
                 return;
             }
