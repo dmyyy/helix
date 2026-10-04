@@ -2,7 +2,7 @@
 
 use std::io;
 
-use crate::{buffer::Cell, terminal::Config};
+use crate::{buffer::Cell, image::{CellPixelSize, ImagePlacement}, terminal::Config};
 
 use helix_view::{
     graphics::{CursorKind, Rect},
@@ -13,6 +13,7 @@ use helix_view::{
 mod termina;
 #[cfg(all(feature = "termina", not(windows)))]
 pub use self::termina::TerminaBackend;
+mod kitty;
 
 #[cfg(all(feature = "termina", windows))]
 mod crossterm;
@@ -49,4 +50,11 @@ pub trait Backend {
     fn supports_true_color(&self) -> bool;
     fn get_theme_mode(&self) -> Option<helix_view::theme::Mode>;
     fn set_background_color(&mut self, color: Option<Color>) -> io::Result<()>;
+
+    /// Returns physical cell metrics when image placement is supported.
+    fn image_cell_size(&self) -> io::Result<Option<CellPixelSize>> { Ok(None) }
+    /// Reconciles the complete visible image frame.
+    fn reconcile_images(&mut self, placements: &[ImagePlacement]) -> io::Result<()> {
+        if placements.is_empty() { Ok(()) } else { Err(io::Error::new(io::ErrorKind::Unsupported, "images unsupported")) }
+    }
 }

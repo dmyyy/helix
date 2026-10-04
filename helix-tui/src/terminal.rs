@@ -1,7 +1,7 @@
 //! Terminal interface provided through the [Terminal] type.
 //! Frontend for [Backend]
 
-use crate::{backend::Backend, buffer::Buffer};
+use crate::{backend::Backend, buffer::Buffer, image::ImagePlacement};
 use helix_view::editor::{Config as EditorConfig, KittyKeyboardProtocolConfig};
 use helix_view::graphics::{CursorKind, Rect};
 use std::io;
@@ -180,6 +180,7 @@ where
         &mut self,
         cursor_position: Option<(u16, u16)>,
         cursor_kind: CursorKind,
+        placements: &[ImagePlacement],
     ) -> io::Result<()> {
         // // Autoresize - otherwise we get glitches if shrinking or potential desync between widgets
         // // and the terminal (if growing), which may OOB.
@@ -194,6 +195,7 @@ where
 
         // Draw to stdout
         self.flush()?;
+        self.backend.reconcile_images(placements)?;
 
         if let Some((x, y)) = cursor_position {
             self.set_cursor(x, y)?;

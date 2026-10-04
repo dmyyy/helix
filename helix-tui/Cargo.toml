@@ -20,6 +20,7 @@ helix-view = { path = "../helix-view", features = ["term"] }
 helix-core = { path = "../helix-core" }
 
 bitflags.workspace = true
+base64 = "0.22"
 cassowary = "0.3"
 arrayvec.workspace = true
 unicode-segmentation.workspace = true

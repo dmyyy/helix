@@ -473,6 +473,13 @@ impl<'t> Iterator for DocumentFormatter<'t> {
             }
         } else {
             self.visual_pos.col += grapheme.width();
+            if grapheme.source.is_eof() {
+                // EOF anchors reserve rows after the real cursor grapheme.
+                let virtual_lines =
+                    self.annotations
+                        .virtual_lines_at(self.char_pos, self.visual_pos, self.line_pos);
+                self.visual_pos.row += virtual_lines;
+            }
         }
         Some(grapheme)
     }

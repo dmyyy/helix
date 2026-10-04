@@ -15,9 +15,9 @@ use termina::{
     Event, OneBased, PlatformTerminal, Terminal as _, WindowSize,
 };
 
-use crate::{buffer::Cell, terminal::Config};
+use crate::{buffer::Cell, image::{CellPixelSize, ImagePlacement}, terminal::Config};
 
-use super::Backend;
+use super::{kitty::KittyImageBackend, Backend};
 
 // These macros are helpers to set/unset modes like bracketed paste or enter/exit the alternate
 // screen.
@@ -84,6 +84,8 @@ pub struct TerminaBackend {
     /// The terminal emulator's background color. This is queried when claiming the terminal so
     /// that custom colors set outside of Helix with OSC11 are restored when Helix exits.
     original_background_color: Option<RgbColor>,
+    /// Kitty placement state is retained across text frames.
+    kitty_images: Option<KittyImageBackend>,
 }
 
 impl TerminaBackend {
@@ -247,6 +249,16 @@ impl TerminaBackend {
             );
         });
 
+        let term = std::env::var("TERM").unwrap_or_default();
+        let program = std::env::var("TERM_PROGRAM").unwrap_or_default().to_ascii_lowercase();
+        let kitty_images = (std::env::var_os("TMUX").is_none()
+            && std::env::var_os("STY").is_none()
+            && !term.starts_with("screen")
+            && !term.starts_with("tmux")
+            && (matches!(term.as_str(), "xterm-kitty" | "xterm-ghostty")
+                || matches!(program.as_str(), "kitty" | "ghostty")))
+            .then(KittyImageBackend::default);
+
         Ok(Self {
             terminal,
             config,
@@ -255,6 +267,7 @@ impl TerminaBackend {
             is_synchronized_output_set: false,
             background_color: None,
             original_background_color,
+            kitty_images,
         })
     }
 
@@ -457,6 +470,9 @@ impl Backend for TerminaBackend {
     fn restore(&mut self) -> io::Result<()> {
         self.disable_extensions()?;
         self.disable_mouse_capture()?;
+        if let Some(images) = &mut self.kitty_images {
+            images.shutdown(&mut self.terminal)?;
+        }
         write!(
             self.terminal,
             "{}{}{}{}",
@@ -556,8 +572,6 @@ impl Backend for TerminaBackend {
 
         write!(self.terminal, "{}", Csi::Sgr(csi::Sgr::Reset))?;
 
-        self.end_sychronized_render()?;
-
         Ok(())
     }
 
@@ -595,6 +609,9 @@ impl Backend for TerminaBackend {
 
     fn clear(&mut self) -> io::Result<()> {
         self.start_synchronized_render()?;
+        if let Some(images) = &mut self.kitty_images {
+            images.clear(&mut self.terminal)?;
+        }
         write!(
             self.terminal,
             "{}",
@@ -609,6 +626,7 @@ impl Backend for TerminaBackend {
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        self.end_sychronized_render()?;
         self.terminal.flush()
     }
 
@@ -641,6 +659,21 @@ impl Backend for TerminaBackend {
             self.reset_background_color()
         }
     }
+
+    fn image_cell_size(&self) -> io::Result<Option<CellPixelSize>> {
+        if self.kitty_images.is_none() { return Ok(None) }
+        let WindowSize { rows, cols, pixel_width, pixel_height } = self.terminal.get_dimensions()?;
+        let (Some(pixel_width), Some(pixel_height)) = (pixel_width, pixel_height) else { return Ok(None) };
+        if rows == 0 || cols == 0 || pixel_width == 0 || pixel_height == 0 { return Ok(None) }
+        let width = pixel_width / cols;
+        let height = pixel_height / rows;
+        Ok((width != 0 && height != 0).then_some(CellPixelSize { width, height }))
+    }
+
+    fn reconcile_images(&mut self, placements: &[ImagePlacement]) -> io::Result<()> {
+        let Some(images) = &mut self.kitty_images else { return Ok(()) };
+        images.reconcile(&mut self.terminal, placements)
+    }
 }
 
 impl Drop for TerminaBackend {
@@ -650,6 +683,9 @@ impl Drop for TerminaBackend {
         if !std::thread::panicking() {
             let _ = self.disable_extensions();
             let _ = self.disable_mouse_capture();
+            if let Some(images) = &mut self.kitty_images {
+                let _ = images.shutdown(&mut self.terminal);
+            }
             let _ = write!(
                 self.terminal,
                 "{}{}{}{}",

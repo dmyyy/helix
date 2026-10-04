@@ -1,6 +1,7 @@
 use crate::{
     backend::Backend,
     buffer::{Buffer, Cell},
+    image::{CellPixelSize, ImagePlacement},
     terminal::Config,
 };
 use helix_core::unicode::width::UnicodeWidthStr;
@@ -15,6 +16,8 @@ pub struct TestBackend {
     height: u16,
     cursor: bool,
     pos: (u16, u16),
+    image_cell_size: Option<CellPixelSize>,
+    image_placements: Vec<ImagePlacement>,
 }
 
 /// Returns a string representation of the given buffer for debugging purpose.
@@ -54,11 +57,23 @@ impl TestBackend {
             buffer: Buffer::empty(Rect::new(0, 0, width, height)),
             cursor: false,
             pos: (0, 0),
+            image_cell_size: None,
+            image_placements: Vec::new(),
         }
     }
 
     pub fn buffer(&self) -> &Buffer {
         &self.buffer
+    }
+
+    /// Enables deterministic image-frame assertions in backend tests.
+    pub fn with_image_support(mut self, cells: CellPixelSize) -> Self {
+        self.image_cell_size = Some(cells);
+        self
+    }
+
+    pub fn image_placements(&self) -> &[ImagePlacement] {
+        &self.image_placements
     }
 
     pub fn resize(&mut self, width: u16, height: u16) {
@@ -146,6 +161,7 @@ impl Backend for TestBackend {
 
     fn clear(&mut self) -> Result<(), io::Error> {
         self.buffer.reset();
+        self.image_placements.clear();
         Ok(())
     }
 
@@ -166,6 +182,19 @@ impl Backend for TestBackend {
     }
 
     fn set_background_color(&mut self, _color: Option<helix_view::theme::Color>) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn image_cell_size(&self) -> io::Result<Option<CellPixelSize>> {
+        Ok(self.image_cell_size)
+    }
+
+    fn reconcile_images(&mut self, placements: &[ImagePlacement]) -> io::Result<()> {
+        if self.image_cell_size.is_some() {
+            self.image_placements.clone_from_slice(placements);
+        } else {
+            self.image_placements.clear();
+        }
         Ok(())
     }
 }
